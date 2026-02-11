@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+output/*.csv
+output/*.json
+output/*.md
+test_results/
+*.log
+.puppetmaster_config.json
+discovery/.working_set.json
+
+# SpiderFoot (auto-installed)
+spiderfoot/
+
+# SpiderFoot exports (add your own)
+spiderfoot_exports/

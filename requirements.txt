@@ -1,0 +1,30 @@
+# PUPPETMASTER - SpiderFoot Sock Puppet Detector
+# Dependencies
+
+# Core data handling
+pandas>=1.5.0
+
+# Network analysis
+networkx>=2.8.0
+
+# Progress bars
+tqdm>=4.64.0
+
+# Domain parsing
+tldextract>=3.4.0
+
+# Visualization (optional but recommended)
+matplotlib>=3.5.0
+
+# Community detection (REQUIRED for accurate clustering)
+python-louvain>=0.16
+
+# Scientific computing (needed for pagerank calculations)
+scipy>=1.10.0
+
+# Domain discovery - search engine scraping (no API keys needed)
+googlesearch-python>=1.2.0
+ddgs>=6.0.0
+
+# CSV handling (built-in, listed for clarity)
+# csv - standard library
