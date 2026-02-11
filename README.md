@@ -2,7 +2,7 @@
 
 ## SpiderFoot Sock Puppet Detector
 
-> *"Finding the strings that connect the puppets"*
+> *"if it quacks like a duck, looks like a duck, it just might be a sock-puppet site"*
 
 ```
 ╭─────────────────────────────────────────────────────────────────────────────────────────────╮
@@ -67,14 +67,14 @@ PUPPETMASTER is an end-to-end pipeline for detecting coordinated networks of dom
 
 | Signal Type | Example | Meaning |
 |-------------|---------|---------|
-| Same Google Analytics ID | UA-12345678-1 | **Definitive proof** of same operator |
-| Same AdSense Publisher ID | pub-1234567890 | **Definitive proof** of same operator |
-| Same Google Site Verification | Token string | **Definitive proof** of same operator |
+| Same Google Analytics ID | UA-12345678-1 | **VERY Confident proof** of same operator |
+| Same AdSense Publisher ID | pub-1234567890 | **VERY Confident proof** of same operator |
+| Same Google Site Verification | Token string | **VERY Confident proof** of same operator |
 | Same WHOIS registrant | John Doe, 123 Main St | Strong evidence |
 | Same nameservers | ns1.customdns.com | Strong evidence |
-| Same SSL certificate | SHA256 fingerprint | **Definitive proof** |
+| Same SSL certificate | SHA256 fingerprint | **VERY Confident proof** of same operator|
 
-**One shared unique identifier = same operator.**
+**One shared unique identifier = very confident same operator.**
 
 ### Use Cases
 
@@ -398,7 +398,7 @@ SECURITY                        SETTINGS
 | | **WebAPI** (recommended) | **CLI** |
 |--|--------------------------|---------|
 | How it works | SpiderFoot web server + REST API | `sf.py -s domain -o csv` per scan |
-| Parallelism | Up to **50** scans per worker | Up to **10** scans per worker |
+| Parallelism | Up to **2-10** scans per worker depending on worker size | usually **2-4** not as reliable as WebAPI |
 | Queue model | Rolling — submits as slots open | Serial bash scripts |
 
 WebAPI mode is the default and recommended. Toggle with C2 menu → **[M] Scan Mode**.
@@ -539,7 +539,7 @@ Analyzes domains for shared infrastructure: IP addresses, SSL certificates, name
 
 ### Confidence Levels
 
-- **CONFIRMED** - At least one smoking gun signal
+- **VERY HIGH CONFIDENCE** - At least one smoking gun signal  (false positives exist) 
 - **LIKELY** - Multiple strong signals
 - **POSSIBLE** - Some strong signals
 - **WEAK** - Only weak/supporting signals
@@ -600,7 +600,7 @@ When running on Kali Linux, PUPPETMASTER automatically detects and integrates wi
 
 ### Infrastructure Correlation [K5]
 
-Cross-references results from all Kali tools to find connections between domains: shared IPs, shared SSL certificates, shared nameservers, shared email addresses, same document authors, and matching social media usernames. Each signal type is weighted by reliability (e.g., shared SSL fingerprint = 1.0, shared IP = 0.9, shared tech stack = 0.5).
+Cross-references results from all Kali tools to find connections between domains: shared IPs, shared SSL certificates, shared nameservers, shared email addresses, same document authors, and matching social media usernames. Each signal type is weighted by reliability (e.g., shared SSL fingerprint = 1.0, shared IP = 0.9, shared tech stack = 0.5).   Can be used to enumerate more domains from keywords, and build additional signals for correlating.  NOTE: the Analysis script as it stands today, only parses Spiderfoot exports.  You will have to come up with your own analysis tools for Kali-Tools outputs.  
 
 ---
 
@@ -629,7 +629,7 @@ simple-term-menu  # Domain review UI
 
 ### How accurate is this?
 
-**Smoking guns are extremely reliable.** If two domains share the same Google Analytics ID, they're definitively controlled by the same entity.
+**Smoking guns are extremely reliable.** If two domains share the same Google Analytics ID, they're VERY LIKELY controlled by the same entity.  (false positives can happen)
 
 Strong signals are probabilistic. Two matching signals = high confidence.
 
@@ -643,11 +643,12 @@ Could mean:
 
 ### How many domains can I analyze?
 
-Single-machine: tested with 100+ domains / 13 million SpiderFoot rows. For 500+ domains, use the distributed C2 controller to scan across multiple EC2 workers in parallel.
+AWS EC2 Distributed scanning: tested with 300+ domains / 13 million SpiderFoot rows. For 500+ domains
+Local Machine:  tested with 25 domains but when using the "Spiderfoot Scan ALL" setting, can take a really long time.  2-5 hours sometimes over 15 hours per domain, and resource intensive.
 
 ### What's WebAPI mode?
 
-WebAPI mode uses SpiderFoot's web server and REST API for scan submission, enabling up to 50 parallel scans per worker (vs 10 in CLI mode). It's the default and recommended mode. Toggle in C2 menu → [M] Scan Mode.
+WebAPI mode uses SpiderFoot's web server and REST API for scan submission, enabling up to 10 parallel scans per worker (vs 2ish in CLI mode). It's the default and recommended mode. Toggle in C2 menu → [M] Scan Mode.  I found that AWS EC2 t3.small as the worker set to 2 parallel scans, with 20 workers running in parallel, was the best cost-To-performance/time ratio.  You can use beefy machines but cost will jump.  
 
 ### Can I use this without SpiderFoot?
 
@@ -692,7 +693,7 @@ MIT License - Use freely, attribution appreciated.
 
 ## Credits
 
-- Built with [Claude](https://claude.ai)
+- Vibe Coded (no human code.  do with that information what you will ) with [Claude](https://claude.ai)
 - Powered by [SpiderFoot](https://github.com/smicallef/spiderfoot)
 - Network analysis via [NetworkX](https://networkx.org/)
 - Community detection via [python-louvain](https://github.com/taynaud/python-louvain)
@@ -789,4 +790,4 @@ Pull requests welcome!
 
 ---
 
-*PUPPETMASTER - Because sock puppets should be on children's shows, not the internet.*
+*Enjoy your noodles al-dente :)*
