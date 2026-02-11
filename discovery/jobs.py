@@ -291,6 +291,24 @@ class JobTracker:
             self.jobs = {}
         self.save_state()
 
+    def remove_pending_domains(self, domains_to_remove: set) -> int:
+        """Remove specific pending domains from the queue.
+
+        Args:
+            domains_to_remove: Set of domain names to remove
+
+        Returns:
+            Number of domains removed
+        """
+        removed = 0
+        with self._lock:
+            for domain in domains_to_remove:
+                if domain in self.jobs and self.jobs[domain].status == JobStatus.PENDING.value:
+                    del self.jobs[domain]
+                    removed += 1
+        self.save_state()
+        return removed
+
     def get_stats(self) -> dict:
         """Get queue statistics."""
         with self._lock:

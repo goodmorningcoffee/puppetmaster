@@ -207,20 +207,24 @@ MENU_ITEMS = {
     ),
     "12": MenuItem(
         key="12",
-        name="Wildcard DNS filter",
-        category="ANALYSIS",
-        title="SIGNAL//NOISE",
-        subtitle="Wildcard DNS Analyzer",
+        name="Manage domain queue",
+        category="DISCOVERY & SCANNING",
+        title="QUEUE CONTROL",
+        subtitle="Domain Queue Manager",
         description=[
-            "Analyze domains with wildcard DNS to determine if they're false",
-            "positives or deliberate obfuscation. Critical for accurate detection.",
+            "Manage loaded domains and scan queue in one place.",
             "",
-            "- FALSE POSITIVE: CDNs, parking pages, shared hosting",
-            "- OBFUSCATION: Intentional wildcard to hide infrastructure",
-            "- Cross-references patterns to distinguish the two",
-            "- Standalone analysis tool (external script)",
+            "LOADED DOMAINS (scraped/imported):",
+            "- Review & remove domains before scanning",
+            "- Clear all loaded domains",
+            "- Move to scan queue to start scanning",
+            "",
+            "SCAN QUEUE (JobTracker):",
+            "- Review & remove pending jobs",
+            "- Retry failed scans",
+            "- Clear completed/all jobs",
         ],
-        next_step="Review findings before running [5]",
+        next_step="Clean up domains, then scan with [3]",
     ),
     "K1": MenuItem(
         key="K1",
@@ -419,7 +423,7 @@ class UIState:
 
     def _rebuild_menu(self):
         """Build menu key list based on current state"""
-        self.menu_keys = ["01", "02", "03", "04", "05", "06", "11"]
+        self.menu_keys = ["01", "02", "03", "04", "12", "05", "06", "11"]
         if self.show_kali:
             self.menu_keys.extend(["K1", "K2", "K3", "K4", "K5"])
         self.menu_keys.extend(["07", "08", "09", "10", "Q"])
@@ -452,6 +456,7 @@ def get_key() -> str:
     """Get a single keypress using non-canonical mode (like ncurses)"""
     import termios
     import tty
+    import select
 
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
@@ -476,23 +481,39 @@ def get_key() -> str:
 
             seq = sys.stdin.read(2)  # Read up to 2 more chars
 
+            result = None
             if seq == '[A':
-                return 'UP'
+                result = 'UP'
             elif seq == '[B':
-                return 'DOWN'
+                result = 'DOWN'
             elif seq == '[C':
-                return 'RIGHT'
+                result = 'RIGHT'
             elif seq == '[D':
-                return 'LEFT'
+                result = 'LEFT'
             elif seq.startswith('['):
-                # Some other escape sequence - consume any remaining (max 10 chars to prevent infinite loop)
-                for _ in range(10):
+                # Some other escape sequence - consume any remaining
+                while select.select([sys.stdin], [], [], 0)[0]:
                     extra = sys.stdin.read(1)
                     if not extra:
                         break
-                return 'ESC'
+                result = 'ESC'
             else:
-                return 'ESC'
+                result = 'ESC'
+
+            # Drain buffered repeats when arrow key is held down
+            # This prevents escape sequence artifacts
+            if result in ('UP', 'DOWN', 'LEFT', 'RIGHT'):
+                # Drain only immediate repeats with very short timeout
+                drained = 0
+                max_drain = 10
+                while drained < max_drain and select.select([sys.stdin], [], [], 0.001)[0]:
+                    peek = sys.stdin.read(1)
+                    if peek == '\x1b':
+                        # Read and discard the rest of this escape sequence
+                        sys.stdin.read(2)
+                    drained += 1
+
+            return result
 
         # Backspace
         if ch in ('\x7f', '\x08'):
@@ -518,7 +539,12 @@ class CyberpunkHUD:
         show_kali: bool = False,
         stats_callback: Optional[Callable[[], Dict[str, Any]]] = None,
     ):
-        self.console = Console()
+        self.console = Console(
+            force_terminal=True,
+            force_interactive=False,
+            highlight=False,
+            soft_wrap=False
+        )
         self.state = UIState(show_kali=show_kali)
         self.stats_callback = stats_callback
         self._running = False
@@ -651,6 +677,7 @@ class CyberpunkHUD:
             title_align="left",
             border_style=Colors.BRIGHT_MAGENTA,
             padding=(0, 0),
+            width=62,
         )
 
     def render_scan_queue(self) -> Panel:
@@ -694,15 +721,15 @@ class CyberpunkHUD:
             title_align="left",
             border_style=Colors.BRIGHT_YELLOW,
             padding=(0, 0),
+            width=62,
         )
 
     def render_banner(self) -> Panel:
-        """Render animated PUPPETMASTER banner - switches every 10 frames"""
+        """Render animated PUPPETMASTER banner - switches based on menu position"""
         frame = self.state.anim_frame
-        term_width = self.console.width or 120
 
-        # Switch banner every 10 frames (roughly every few seconds depending on render speed)
-        self.state.banner_mode = (frame // 10) % 8
+        # Switch banner based on menu position (every 8 menu items)
+        self.state.banner_mode = (self.state.selected_index // 8) % 10
         text = Text()
 
         # Colors for animation
@@ -714,20 +741,6 @@ class CyberpunkHUD:
             Colors.BRIGHT_RED,
             Colors.BRIGHT_BLUE,
         ]
-
-        # Narrow terminal fallback - show simple text banner
-        if term_width < 110:
-            color = colors[frame % len(colors)]
-            text.append("\n", style=color)
-            text.append("  ╔═══════════════════════════════════╗\n", style=color)
-            text.append("  ║      P U P P E T M A S T E R     ║\n", style=color)
-            text.append("  ║    Sock Puppet Domain Detector   ║\n", style=color)
-            text.append("  ╚═══════════════════════════════════╝\n", style=color)
-            return Panel(
-                text,
-                border_style=Colors.DARK_GREY,
-                padding=(0, 0),
-            )
 
         if self.state.banner_mode == 0:
             # Mode 0: PUPPETMASTER text art
@@ -876,7 +889,7 @@ class CyberpunkHUD:
                 color_idx = (frame + i) % len(colors)
                 text.append(line + "\n", style=colors[color_idx])
 
-        else:
+        elif self.state.banner_mode == 7:
             # Mode 7: Geometric hexagon network
             art = [
                 "              ╱╲              ╱╲              ╱╲        ",
@@ -897,10 +910,74 @@ class CyberpunkHUD:
                 color_idx = (frame + i) % len(colors)
                 text.append(line + "\n", style=colors[color_idx])
 
+        elif self.state.banner_mode == 8:
+            # Mode 8: SIGNAL//NOISE - Wildcard DNS Analyzer
+            art = [
+                "  ███████╗██╗ ██████╗ ███╗   ██╗ █████╗ ██╗            ",
+                "  ██╔════╝██║██╔════╝ ████╗  ██║██╔══██╗██║            ",
+                "  ███████╗██║██║  ███╗██╔██╗ ██║███████║██║            ",
+                "  ╚════██║██║██║   ██║██║╚██╗██║██╔══██║██║            ",
+                "  ███████║██║╚██████╔╝██║ ╚████║██║  ██║███████╗       ",
+                "  ╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝       ",
+                "        ██╗██╗███╗   ██╗ ██████╗ ██╗███████╗███████╗   ",
+                "       ██╔╝██╔╝████╗  ██║██╔═══██╗██║██╔════╝██╔════╝   ",
+                "      ██╔╝██╔╝ ██╔██╗ ██║██║   ██║██║███████╗█████╗     ",
+                "     ██╔╝██╔╝  ██║╚██╗██║██║   ██║██║╚════██║██╔══╝     ",
+                "    ██╔╝██╔╝   ██║ ╚████║╚██████╔╝██║███████║███████╗   ",
+                "    ╚═╝ ╚═╝    ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚══════╝╚══════╝   ",
+                "",
+            ]
+            for i, line in enumerate(art):
+                color_idx = (frame + i) % len(colors)
+                text.append(line + "\n", style=colors[color_idx])
+
+        elif self.state.banner_mode == 9:
+            # Mode 9: WILDCARD HUNTER
+            art = [
+                "  ██╗    ██╗██╗██╗     ██████╗  ██████╗ █████╗ ██████╗ ██████╗ ",
+                "  ██║    ██║██║██║     ██╔══██╗██╔════╝██╔══██╗██╔══██╗██╔══██╗",
+                "  ██║ █╗ ██║██║██║     ██║  ██║██║     ███████║██████╔╝██║  ██║",
+                "  ██║███╗██║██║██║     ██║  ██║██║     ██╔══██║██╔══██╗██║  ██║",
+                "  ╚███╔███╔╝██║███████╗██████╔╝╚██████╗██║  ██║██║  ██║██████╔╝",
+                "   ╚══╝╚══╝ ╚═╝╚══════╝╚═════╝  ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝ ",
+                "         ██╗  ██╗██╗   ██╗███╗   ██╗████████╗███████╗██████╗   ",
+                "         ██║  ██║██║   ██║████╗  ██║╚══██╔══╝██╔════╝██╔══██╗  ",
+                "         ███████║██║   ██║██╔██╗ ██║   ██║   █████╗  ██████╔╝  ",
+                "         ██╔══██║██║   ██║██║╚██╗██║   ██║   ██╔══╝  ██╔══██╗  ",
+                "         ██║  ██║╚██████╔╝██║ ╚████║   ██║   ███████╗██║  ██║  ",
+                "         ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝  ",
+                "",
+            ]
+            for i, line in enumerate(art):
+                color_idx = (frame + i) % len(colors)
+                text.append(line + "\n", style=colors[color_idx])
+
+        else:
+            # Fallback to Mode 0 for any other value
+            art = [
+                "  ██████╗ ██╗   ██╗██████╗ ██████╗ ███████╗████████╗",
+                "  ██╔══██╗██║   ██║██╔══██╗██╔══██╗██╔════╝╚══██╔══╝",
+                "  ██████╔╝██║   ██║██████╔╝██████╔╝█████╗     ██║   ",
+                "  ██╔═══╝ ██║   ██║██╔═══╝ ██╔═══╝ ██╔══╝     ██║   ",
+                "  ██║     ╚██████╔╝██║     ██║     ███████╗   ██║   ",
+                "  ╚═╝      ╚═════╝ ╚═╝     ╚═╝     ╚══════╝   ╚═╝   ",
+                "    ███╗   ███╗ █████╗ ███████╗████████╗███████╗██████╗ ",
+                "    ████╗ ████║██╔══██╗██╔════╝╚══██╔══╝██╔════╝██╔══██╗",
+                "    ██╔████╔██║███████║███████╗   ██║   █████╗  ██████╔╝",
+                "    ██║╚██╔╝██║██╔══██║╚════██║   ██║   ██╔══╝  ██╔══██╗",
+                "    ██║ ╚═╝ ██║██║  ██║███████║   ██║   ███████╗██║  ██║",
+                "    ╚═╝     ╚═╝╚═╝  ╚═╝╚══════╝   ╚═╝   ╚══════╝╚═╝  ╚═╝",
+                "",
+            ]
+            for i, line in enumerate(art):
+                color_idx = (frame + i) % len(colors)
+                text.append(line + "\n", style=colors[color_idx])
+
         return Panel(
             text,
             border_style=Colors.DARK_GREY,
             padding=(0, 0),
+            width=62,
         )
 
     def render_status_bar(self) -> Panel:
@@ -934,14 +1011,14 @@ class CyberpunkHUD:
         text.append(" ANLZ", style=Colors.TEXT)
         text.append(self._progress_bar(self.state.analyze_progress), style=Colors.BRIGHT_YELLOW)
 
-        return Panel(text, border_style=Colors.BORDER, padding=(0, 1))
+        return Panel(text, border_style=Colors.BORDER, padding=(0, 1), width=108)
 
     def render_loadout(self) -> Panel:
         """Render the LOADOUT menu panel"""
         text = Text()
 
         categories = [
-            ("DISCOVERY & SCANNING", ["01", "02", "03", "04"]),
+            ("DISCOVERY & SCANNING", ["01", "02", "03", "04", "12"]),
             ("ANALYSIS", ["05", "06", "11"]),
         ]
         if self.state.show_kali:
@@ -1066,6 +1143,7 @@ class CyberpunkHUD:
             title_align="left",
             border_style=Colors.BRIGHT_CYAN,
             padding=(0, 0),
+            width=62,
         )
 
     def render_tips(self) -> Panel:
@@ -1080,7 +1158,7 @@ class CyberpunkHUD:
         text.append("[9]", style=Colors.BRIGHT_YELLOW)
         text.append(" for tmux (survives disconnects)", style=Colors.GREY)
 
-        return Panel(text, border_style=Colors.DARK_GREY, padding=(0, 1))
+        return Panel(text, border_style=Colors.DARK_GREY, padding=(0, 1), width=108)
 
     def render_controls(self) -> Panel:
         """Render keyboard controls panel"""
@@ -1095,7 +1173,7 @@ class CyberpunkHUD:
         text.append("[Q]    ", style=Colors.TEXT)
         text.append("[R]", style=Colors.DARK_GREY)
 
-        return Panel(text, border_style=Colors.DARK_GREY, padding=(0, 1))
+        return Panel(text, border_style=Colors.DARK_GREY, padding=(0, 1), width=108)
 
     def render_input_line(self) -> Panel:
         """Render the command input line at the bottom"""
@@ -1105,27 +1183,31 @@ class CyberpunkHUD:
             text.append(self.state.input_buffer, style=f"bold {Colors.BRIGHT_YELLOW}")
         text.append("_", style=f"bold blink {Colors.BRIGHT_GREEN}")
 
-        return Panel(text, border_style=Colors.BRIGHT_GREEN, padding=(0, 1))
+        return Panel(text, border_style=Colors.BRIGHT_GREEN, padding=(0, 1), width=108)
 
     def render(self):
         """Render the full HUD using Layout for proper grid"""
-        # Clear screen once at start
+        # Setup alternate screen buffer on first render
         if not hasattr(self, '_rendered_once'):
-            os.system('clear' if os.name != 'nt' else 'cls')
+            # Enter alternate screen buffer (like tmux/vim)
+            sys.stdout.write('\033[?1049h')
+            # Hide cursor
+            sys.stdout.write('\033[?25l')
+            sys.stdout.flush()
             self._rendered_once = True
             self._last_state = None
 
-        # Increment animation frame
+        # Increment animation frame (for color cycling)
         self.state.anim_frame = (self.state.anim_frame + 1) % 100
 
-        # Check if state changed - only redraw if needed (but always redraw for animation)
+        # Check if state changed - only redraw if needed
+        # Note: anim_frame NOT included since we use menu-position-based banners
         current_state = (
             self.state.selected_index,
             self.state.input_buffer,
             self.state.status,
             self.state.queue_count,
             self.state.scan_count,
-            self.state.anim_frame,
         )
 
         if current_state == self._last_state:
@@ -1133,23 +1215,24 @@ class CyberpunkHUD:
 
         self._last_state = current_state
 
-        # Move cursor to home and redraw
+        # Move cursor to home without clearing (alternate buffer is already clean)
         sys.stdout.write('\033[H')
         sys.stdout.flush()
 
-        # Get terminal size
-        term_width = self.console.width or 120
+        # Fixed layout width (left 46 + right 62 = 108)
+        # Right column needs 62 to fit PUPPETMASTER banner (~58 chars + borders)
+        LAYOUT_WIDTH = 108
 
-        # Status bar (full width)
+        # Status bar (fixed width)
         self.console.print(self.render_status_bar())
 
         # Build the main layout using Rich Layout
-        layout = Layout()
+        layout = Layout(size=LAYOUT_WIDTH)
 
         # Main content area with left/right split
         layout.split_row(
             Layout(name="left", size=46),  # Fixed width for loadout
-            Layout(name="right"),  # Remaining space for mission/vitals
+            Layout(name="right", size=62),  # Fixed width for right column (banner needs ~58)
         )
 
         # Left column: LOADOUT + DESCRIPTION stacked
@@ -1172,15 +1255,15 @@ class CyberpunkHUD:
         layout["right"]["queue"].update(self.render_scan_queue())
         layout["right"]["banner"].update(self.render_banner())
 
-        # Print the layout
-        self.console.print(layout, height=42)
+        # Print the layout with fixed width
+        self.console.print(layout, height=42, width=LAYOUT_WIDTH)
 
-        # Bottom panels (full width)
+        # Bottom panels (fixed width)
         self.console.print(self.render_tips())
         self.console.print(self.render_controls())
         self.console.print(self.render_input_line())
 
-        # Clear any leftover content
+        # Ensure any remaining lines are cleared
         sys.stdout.write('\033[J')
         sys.stdout.flush()
 
@@ -1240,14 +1323,15 @@ class CyberpunkHUD:
         elif key == '\x03':
             return 'Q'
 
+        # R for rickroll easter egg (check before other alphanumeric handling)
+        elif key in ('r', 'R'):
+            if not self.state.input_buffer:
+                self._rickroll()
+            return None
+
         # Q for quit (immediate, no buffer)
         elif key.upper() == 'Q' and not self.state.input_buffer:
             return 'Q'
-
-        # R for rickroll easter egg (immediate, no buffer)
-        elif key.upper() == 'R' and not self.state.input_buffer:
-            webbrowser.open('https://www.youtube.com/watch?v=dQw4w9WgXcQ')
-            return None  # Don't exit, just open the URL
 
         # Alphanumeric - add to buffer (max 10 chars to prevent memory issues)
         elif key.isalnum():
@@ -1276,9 +1360,76 @@ class CyberpunkHUD:
 
         return None
 
+    def _rickroll(self):
+        """Never gonna give you up, never gonna let you down"""
+        rick_url = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RDdQw4w9WgXcQ&start_radio=1'
+
+        # Try to open browser (works on local machines with display)
+        browser_opened = False
+        try:
+            # Check if we have a display (Linux/Mac GUI) or are on Windows
+            has_display = os.name == 'nt' or os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')
+            if has_display:
+                browser_opened = webbrowser.open(rick_url)
+        except Exception:
+            pass
+
+        # Always show ASCII art (works over SSH, and confirms rickroll on local)
+        os.system('clear' if os.name != 'nt' else 'cls')
+        rick = """
+\033[93m
+    ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣤⣤⣤⣤⣤⣶⣦⣤⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀
+    ⠀⠀⠀⠀⠀⠀⠀⠀⢀⣴⣿⡿⠛⠉⠙⠛⠛⠛⠛⠻⢿⣿⣷⣤⡀⠀⠀⠀⠀⠀
+    ⠀⠀⠀⠀⠀⠀⠀⠀⣼⣿⠋⠀⠀⠀⠀⠀⠀⠀⢀⣀⣀⠈⢻⣿⣿⡄⠀⠀⠀⠀
+    ⠀⠀⠀⠀⠀⠀⠀⣸⣿⡏⠀⠀⠀⣠⣶⣾⣿⣿⣿⠿⠿⠿⢿⣿⣿⣿⣄⠀⠀⠀
+    ⠀⠀⠀⠀⠀⠀⠀⣿⣿⠁⠀⠀⢰⣿⣿⣯⠁⠀⠀⠀⠀⠀⠀⠀⠈⠙⢿⣷⡄⠀
+    ⠀⠀⣀⣤⣴⣶⣶⣿⡟⠀⠀⠀⢸⣿⣿⣿⣆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣷⠀
+    ⠀⢰⣿⡟⠋⠉⣹⣿⡇⠀⠀⠀⠘⣿⣿⣿⣿⣷⣦⣤⣤⣤⣶⣶⣶⣶⣿⣿⣿⠀
+    ⠀⢸⣿⡇⠀⠀⣿⣿⡇⠀⠀⠀⠀⠹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠃⠀
+    ⠀⣸⣿⡇⠀⠀⣿⣿⡇⠀⠀⠀⠀⠀⠉⠻⠿⣿⣿⣿⣿⡿⠿⠿⠛⢻⣿⡇⠀⠀
+    ⠀⣿⣿⠁⠀⠀⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣧⠀⠀
+    ⠀⣿⣿⠀⠀⠀⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⠀⠀
+    ⠀⣿⣿⠀⠀⠀⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⠀⠀
+    ⠀⢿⣿⡆⠀⠀⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⡇⠀⠀
+    ⠀⠸⣿⣧⡀⠀⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⠃⠀⠀
+    ⠀⠀⠛⢿⣿⣿⣿⣿⣇⠀⠀⠀⠀⠀⣰⣿⣿⣷⣶⣶⣶⣶⠶⠀⢠⣿⣿⠀⠀⠀
+    ⠀⠀⠀⠀⠀⠀⠀⣿⣿⠀⠀⠀⠀⠀⣿⣿⡇⠀⣽⣿⡏⠁⠀⠀⢸⣿⡇⠀⠀⠀
+    ⠀⠀⠀⠀⠀⠀⠀⣿⣿⠀⠀⠀⠀⠀⣿⣿⡇⠀⢹⣿⡆⠀⠀⠀⣸⣿⠇⠀⠀⠀
+    ⠀⠀⠀⠀⠀⠀⠀⢿⣿⣦⣄⣀⣠⣴⣿⣿⠁⠀⠈⠻⣿⣿⣿⣿⡿⠏⠀⠀⠀⠀
+    ⠀⠀⠀⠀⠀⠀⠀⠈⠛⠻⠿⠿⠿⠿⠋⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+
+\033[96m
+    ███╗   ██╗███████╗██╗   ██╗███████╗██████╗      ██████╗  ██████╗ ███╗   ██╗███╗   ██╗ █████╗
+    ████╗  ██║██╔════╝██║   ██║██╔════╝██╔══██╗    ██╔════╝ ██╔═══██╗████╗  ██║████╗  ██║██╔══██╗
+    ██╔██╗ ██║█████╗  ██║   ██║█████╗  ██████╔╝    ██║  ███╗██║   ██║██╔██╗ ██║██╔██╗ ██║███████║
+    ██║╚██╗██║██╔══╝  ╚██╗ ██╔╝██╔══╝  ██╔══██╗    ██║   ██║██║   ██║██║╚██╗██║██║╚██╗██║██╔══██║
+    ██║ ╚████║███████╗ ╚████╔╝ ███████╗██║  ██║    ╚██████╔╝╚██████╔╝██║ ╚████║██║ ╚████║██║  ██║
+    ╚═╝  ╚═══╝╚══════╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝     ╚═════╝  ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═══╝╚═╝  ╚═╝
+
+\033[95m
+     ██████╗ ██╗██╗   ██╗███████╗    ██╗   ██╗ ██████╗ ██╗   ██╗    ██╗   ██╗██████╗ ██╗
+    ██╔════╝ ██║██║   ██║██╔════╝    ╚██╗ ██╔╝██╔═══██╗██║   ██║    ██║   ██║██╔══██╗██║
+    ██║  ███╗██║██║   ██║█████╗       ╚████╔╝ ██║   ██║██║   ██║    ██║   ██║██████╔╝██║
+    ██║   ██║██║╚██╗ ██╔╝██╔══╝        ╚██╔╝  ██║   ██║██║   ██║    ██║   ██║██╔═══╝ ╚═╝
+    ╚██████╔╝██║ ╚████╔╝ ███████╗       ██║   ╚██████╔╝╚██████╔╝    ╚██████╔╝██║     ██╗
+     ╚═════╝ ╚═╝  ╚═══╝  ╚══════╝       ╚═╝    ╚═════╝  ╚═════╝      ╚═════╝ ╚═╝     ╚═╝
+\033[0m
+\033[93m                    https://www.youtube.com/watch?v=dQw4w9WgXcQ\033[0m
+"""
+        if browser_opened:
+            rick += "\n\033[92m                              Browser opened! Enjoy :)\033[0m\n"
+        rick += "\n\033[90m                         Press any key to return...\033[0m\n"
+
+        print(rick)
+        get_key()  # Wait for any key
+
     def _cleanup(self):
         """Restore terminal state on exit"""
-        os.system('clear' if os.name != 'nt' else 'cls')
+        # Show cursor again
+        sys.stdout.write('\033[?25h')
+        # Exit alternate screen buffer (restore previous screen)
+        sys.stdout.write('\033[?1049l')
+        sys.stdout.flush()
 
     def run(self) -> str:
         """Run the HUD loop, return selected tool key"""

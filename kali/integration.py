@@ -657,7 +657,7 @@ def run_infra_analysis_menu(print_func: Callable = print,
 
     elif choice == '3':
         # Use domains from config
-        config_file = ".puppetmaster_config.json"
+        config_file = os.path.expanduser("~/.puppetmaster_config.json")
         if os.path.exists(config_file):
             try:
                 import json
@@ -943,8 +943,8 @@ def _flush_stdin():
         pass  # Not a TTY or termios not available
 
 
-# Config file path for puppetmaster
-CONFIG_FILE = ".puppetmaster_config.json"
+# Config file path for puppetmaster (in home directory to survive rm -rf)
+CONFIG_FILE = os.path.expanduser("~/.puppetmaster_config.json")
 
 
 def _add_to_pending_domains(result: AggregatedResult, print_func: Callable = print) -> int:

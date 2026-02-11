@@ -242,7 +242,8 @@ def confirm(prompt: str, default: bool = True) -> bool:
 def find_puppetmaster_config() -> Dict:
     """Load puppetmaster config to find saved paths"""
     config_paths = [
-        Path(__file__).parent / ".puppetmaster_config.json",
+        Path.home() / ".puppetmaster_config.json",  # Primary location (survives rm -rf)
+        Path(__file__).parent / ".puppetmaster_config.json",  # Legacy location
         Path.cwd() / ".puppetmaster_config.json",
     ]
 

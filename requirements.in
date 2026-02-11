@@ -1,0 +1,49 @@
+# PUPPETMASTER - SpiderFoot Sock Puppet Detector
+# Base dependencies - use pip-compile to generate requirements.txt with hashes
+#
+# To generate locked requirements with hashes:
+#   pip install pip-tools
+#   pip-compile --generate-hashes requirements.in -o requirements.txt
+#
+# To install with hash verification:
+#   pip install --require-hashes -r requirements.txt
+
+# Core data handling
+pandas>=1.5.0,<3.0
+
+# Network analysis
+networkx>=2.8.0,<4.0
+
+# Progress bars
+tqdm>=4.64.0,<5.0
+
+# Domain parsing
+tldextract>=3.4.0,<6.0
+
+# Visualization (optional but recommended)
+matplotlib>=3.5.0,<4.0
+
+# Community detection (REQUIRED for accurate clustering)
+python-louvain>=0.16,<1.0
+
+# Scientific computing (needed for pagerank calculations)
+scipy>=1.10.0,<2.0
+
+# Domain discovery - search engine scraping (no API keys needed)
+googlesearch-python>=1.2.0,<2.0
+ddgs>=9.0.0,<10.0
+
+# DNS resolution (for Signal//Noise Wildcard DNS Analyzer)
+dnspython>=2.4.0,<3.0
+
+# HTTP requests (for certificate transparency and HTTP fingerprinting)
+requests>=2.28.0,<3.0
+
+# Interactive terminal menus (for domain review UI)
+simple-term-menu>=1.6.0,<2.0
+
+# Rich terminal UI (for Gaming HUD interface)
+rich>=13.0.0,<14.0
+
+# System monitoring (for CPU/MEM/DISK stats in HUD)
+psutil>=5.9.0,<7.0

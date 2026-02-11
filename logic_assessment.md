@@ -210,11 +210,36 @@ When running on Kali Linux, PUPPETMASTER can use additional OSINT tools:
 | theHarvester | Finds emails and subdomains |
 | Amass | Advanced DNS enumeration |
 | DNSRecon | DNS record analysis |
-| Nmap | Port and service scanning |
+| DNSEnum | DNS zone enumeration |
+| Sublist3r | Subdomain discovery |
+| Fierce | DNS reconnaissance |
 | WhatWeb | Website fingerprinting |
 | SSLScan | SSL/TLS analysis |
+| wafw00f | WAF detection |
+| Nmap | Port and service scanning |
+| Nikto | Web vulnerability scanning |
+| Metagoofil | Document metadata extraction |
+| ExifTool | File metadata analysis |
+| DMitry | Deepmagic Information Tool |
+| Sherlock | Social media username search |
 
-**Infrastructure Correlation (K5)** cross-references results from all tools to find additional connections between domains.
+### Scan Modes
+
+| Mode | Description | Detection Risk |
+|------|-------------|----------------|
+| **GHOST** | Passive only — zero target contact | None |
+| **STEALTH** | Light touch — 1-2 requests per domain | Low |
+| **STANDARD** | Balanced reconnaissance (default) | Medium |
+| **DEEP** | Maximum coverage — all tools enabled | High |
+
+### Infrastructure Correlation (K5)
+
+Cross-references results from all Kali tools to find additional connections between domains. Uses weighted correlation signals:
+- **1.0** — Shared SSL certificate fingerprint (definitive)
+- **0.95** — Shared email address, shared social media username
+- **0.9** — Shared IP address, shared document author
+- **0.7-0.85** — Shared nameserver, mail server, SSL organization
+- **0.3-0.5** — Shared technology stack, server signature, SSL issuer
 
 ---
 
@@ -284,6 +309,44 @@ User Input (keywords or domain list)
 | **Hub** | A central domain with many connections |
 | **Louvain** | A community detection algorithm for graphs |
 | **Centrality** | A measure of how "important" a node is in a network |
+
+---
+
+## Improving Accuracy
+
+### Domain Review Before Scanning
+
+PUPPETMASTER allows you to review and remove domains before adding them to the scan queue:
+
+1. When loading domains from a file, select **[R] Review & remove domains**
+2. Use arrow keys to navigate, TAB to select domains for removal
+3. Search function (/) helps find specific domains quickly
+4. Remove false positives or unrelated domains before scanning
+
+### Wildcard DNS Filtering
+
+Option [11] filters out domains using wildcard DNS - where any subdomain resolves to the same IP. These are often:
+- Parked domain services
+- Domain squatters
+- Hosting providers with catch-all DNS
+
+Filtering these reduces false positives in your analysis, since infrastructure-sharing signals from wildcard DNS domains are meaningless.
+
+A full standalone analyzer is also available for batch DNS analysis: `python3 wildcardDNS_analyzer.py --domain example.com`
+
+### Distributed Scanning for Scale
+
+For 100+ domains, use the distributed C2 controller to scan across multiple EC2 workers:
+- Faster scanning (parallel across workers)
+- Auto-distribution based on worker resources
+- Real-time progress monitoring
+- One-click result collection
+
+Access: SpiderFoot Control Center → [D] Multi-EC2 C2 Controller
+
+### Infrastructure Analysis (Standalone)
+
+A standalone infrastructure correlation tool (`python3 infra_analysis.py`) provides supplementary detection by analyzing shared IPs, shared SSL certificates, shared nameservers, and shared technology stacks across domains. Unlike K5 (which uses Kali tool results), this works on any platform without Kali Linux.
 
 ---
 

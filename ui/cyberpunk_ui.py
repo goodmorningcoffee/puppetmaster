@@ -6,6 +6,7 @@ Reusable styled components for submenus and displays
 """
 
 from typing import Optional, List, Tuple, Callable, Any
+import shutil
 import sys
 import os
 
@@ -57,10 +58,15 @@ class CyberColors:
 _console: Optional[Console] = None
 
 def get_console() -> Console:
-    """Get or create the shared console instance"""
+    """Get or create the shared console instance.
+
+    Caps width at 120 to prevent panels stretching across very wide terminals.
+    Only affects submenu screens — the main HUD has its own Console(width=108).
+    """
     global _console
     if _console is None:
-        _console = Console()
+        term_width = shutil.get_terminal_size((120, 24)).columns
+        _console = Console(width=min(term_width, 120))
     return _console
 
 

@@ -204,7 +204,7 @@ def test_connection(host, user, key_path):
 
     cmd = [
         "ssh", "-i", key_path,
-        "-o", "StrictHostKeyChecking=no",
+        "-o", "StrictHostKeyChecking=accept-new",
         "-o", "ConnectTimeout=10",
         f"{user}@{host}",
         "echo 'Connection OK'"
@@ -224,6 +224,50 @@ def test_connection(host, user, key_path):
     except Exception as e:
         log("ERROR", f"Connection error: {e}")
         return False
+
+
+def cleanup_remote(host, user, key_path, remote_dir):
+    """
+    Kill running puppetmaster processes and remove old directory on remote.
+    This ensures clean state before uploading new code.
+    """
+    log("INFO", "Cleaning up remote (killing old processes, removing old files)...")
+
+    # Build cleanup command:
+    # 1. Kill any running puppetmaster.py processes
+    # 2. Kill the puppetmaster tmux session if it exists
+    # 3. Remove the old puppetmaster directory
+    safe_remote = shlex.quote(remote_dir) if remote_dir else "'~/puppetmaster'"
+
+    cleanup_commands = (
+        "pkill -f puppetmaster.py 2>/dev/null || true; "
+        "tmux kill-session -t puppetmaster 2>/dev/null || true; "
+        f"rm -rf {safe_remote} 2>/dev/null || true"
+    )
+
+    cmd = [
+        "ssh", "-i", key_path,
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "ConnectTimeout=10",
+        f"{user}@{host}",
+        cleanup_commands
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode == 0:
+            log("SUCCESS", "Remote cleanup complete (old processes killed, old files removed)")
+            return True
+        else:
+            # Even if some commands "fail" (e.g., no process to kill), that's OK
+            log("SUCCESS", "Remote cleanup complete")
+            return True
+    except subprocess.TimeoutExpired:
+        log("WARN", "Cleanup timed out, continuing anyway...")
+        return True
+    except Exception as e:
+        log("WARN", f"Cleanup error: {e}, continuing anyway...")
+        return True
 
 def count_items(directory):
     """Count files and directories recursively"""
@@ -258,13 +302,12 @@ def upload_files(host, user, key_path, local_dir, remote_dir):
     log("INFO", f"Uploading to {user}@{host}:{remote_dir}...")
 
     # Create remote directory
-    # Note: StrictHostKeyChecking=no is intentional for EC2 instances which frequently
-    # change host keys when instances are replaced. For production systems with stable
-    # host keys, consider using StrictHostKeyChecking=accept-new instead.
+    # Note: StrictHostKeyChecking=accept-new accepts new keys on first connection
+    # but rejects if the key changes (prevents MITM attacks on known hosts)
     safe_remote = shlex.quote(remote_dir) if remote_dir else "'~/puppet'"
     mkdir_cmd = [
         "ssh", "-i", key_path,
-        "-o", "StrictHostKeyChecking=no",
+        "-o", "StrictHostKeyChecking=accept-new",
         f"{user}@{host}",
         f"mkdir -p {safe_remote}"
     ]
@@ -275,7 +318,7 @@ def upload_files(host, user, key_path, local_dir, remote_dir):
     log("UPLOAD", "Syncing directory (recursive)...")
 
     # Build SSH command for rsync - quote paths for safety
-    ssh_cmd = f"ssh -i {shlex.quote(key_path)} -o StrictHostKeyChecking=no"
+    ssh_cmd = f"ssh -i {shlex.quote(key_path)} -o StrictHostKeyChecking=accept-new"
 
     rsync_cmd = [
         "rsync", "-avz", "--progress",
@@ -285,6 +328,12 @@ def upload_files(host, user, key_path, local_dir, remote_dir):
         "--exclude=.git",
         "--exclude=.venv",
         "--exclude=venv",
+        "--exclude=*.pem",           # CRITICAL: Never upload private keys!
+        "--exclude=*.key",           # CRITICAL: Never upload private keys!
+        "--exclude=*.ppk",           # CRITICAL: Never upload private keys!
+        "--exclude=*credentials*",   # CRITICAL: Never upload credentials!
+        "--exclude=.aws",            # CRITICAL: Never upload AWS config!
+        "--exclude=.env",            # CRITICAL: Never upload env files!
         f"--rsh={ssh_cmd}",
         f"{local_dir}/",  # Trailing slash = contents of directory
         f"{user}@{host}:{remote_dir}/"
@@ -293,14 +342,30 @@ def upload_files(host, user, key_path, local_dir, remote_dir):
     def scp_contents(local_dir, remote_dest):
         """Upload contents of directory (not the directory itself) using scp"""
         log("UPLOAD", "Uploading directory contents via scp...")
-        success = True
 
         # Items to always skip
         SKIP_ITEMS = {'__pycache__', 'venv', '.venv', '.git', 'node_modules', '.pytest_cache'}
 
+        # CRITICAL: File extensions that must NEVER be uploaded (security risk)
+        DANGEROUS_EXTENSIONS = {'.pem', '.key', '.ppk', '.p12', '.pfx'}
+        DANGEROUS_NAMES = {'credentials', '.aws', '.env', 'secrets'}
+
+        uploaded_count = 0
+        failed_count = 0
+        failed_items = []
+
         for item in os.listdir(local_dir):
             # Skip hidden files, junk, and venv directories
             if item.startswith('.') or item in SKIP_ITEMS:
+                continue
+
+            # CRITICAL: Skip sensitive files (private keys, credentials)
+            item_lower = item.lower()
+            if any(item_lower.endswith(ext) for ext in DANGEROUS_EXTENSIONS):
+                log("WARN", f"SKIPPING {item} (private key - never upload!)")
+                continue
+            if any(danger in item_lower for danger in DANGEROUS_NAMES):
+                log("WARN", f"SKIPPING {item} (sensitive file - never upload!)")
                 continue
 
             item_path = os.path.join(local_dir, item)
@@ -332,7 +397,7 @@ def upload_files(host, user, key_path, local_dir, remote_dir):
                 excludes = ' '.join([f"--exclude={shlex.quote(s)}" for s in SKIP_ITEMS])
                 tar_cmd = (
                     f"tar -czf - -C {shlex.quote(local_dir)} {excludes} {shlex.quote(item)} | "
-                    f"ssh -i {shlex.quote(key_path)} -o StrictHostKeyChecking=no "
+                    f"ssh -i {shlex.quote(key_path)} -o StrictHostKeyChecking=accept-new "
                     f"{shlex.quote(user)}@{shlex.quote(host)} "
                     f"'cd {shlex.quote(remote_dest)} && tar -xzf -'"
                 )
@@ -341,22 +406,26 @@ def upload_files(host, user, key_path, local_dir, remote_dir):
                     result = subprocess.run(tar_cmd, shell=True, capture_output=True, text=True, timeout=timeout)
                     if result.returncode == 0:
                         print(f"  {Colors.GREEN}✓{Colors.RESET} {item}")
+                        uploaded_count += 1
                     else:
                         error_msg = result.stderr.strip()[:80] if result.stderr else "Unknown error"
                         print(f"  {Colors.RED}✗{Colors.RESET} {item}: {error_msg}")
-                        success = False
+                        failed_count += 1
+                        failed_items.append(item)
                 except subprocess.TimeoutExpired:
                     print(f"  {Colors.RED}✗{Colors.RESET} {item}: Timeout after {timeout}s")
-                    success = False
+                    failed_count += 1
+                    failed_items.append(item)
                 except Exception as e:
                     print(f"  {Colors.RED}✗{Colors.RESET} {item}: {e}")
-                    success = False
+                    failed_count += 1
+                    failed_items.append(item)
             else:
                 # For files, use scp directly
                 scp_cmd = [
                     "scp", "-C",  # -C for compression
                     "-i", key_path,
-                    "-o", "StrictHostKeyChecking=no",
+                    "-o", "StrictHostKeyChecking=accept-new",
                     "-o", "ConnectTimeout=30",
                     item_path,
                     f"{user}@{host}:{remote_dest}/"
@@ -366,18 +435,30 @@ def upload_files(host, user, key_path, local_dir, remote_dir):
                     result = subprocess.run(scp_cmd, capture_output=True, text=True, timeout=timeout)
                     if result.returncode == 0:
                         print(f"  {Colors.GREEN}✓{Colors.RESET} {item}")
+                        uploaded_count += 1
                     else:
                         error_msg = result.stderr.strip()[:80] if result.stderr else "Unknown error"
                         print(f"  {Colors.RED}✗{Colors.RESET} {item}: {error_msg}")
-                        success = False
+                        failed_count += 1
+                        failed_items.append(item)
                 except subprocess.TimeoutExpired:
                     print(f"  {Colors.RED}✗{Colors.RESET} {item}: Timeout after {timeout}s")
-                    success = False
+                    failed_count += 1
+                    failed_items.append(item)
                 except Exception as e:
                     print(f"  {Colors.RED}✗{Colors.RESET} {item}: {e}")
-                    success = False
+                    failed_count += 1
+                    failed_items.append(item)
 
-        return success
+        # Report results
+        total = uploaded_count + failed_count
+        if failed_count > 0:
+            log("WARN", f"Uploaded {uploaded_count}/{total} items ({failed_count} failed: {', '.join(failed_items)})")
+        else:
+            log("SUCCESS", f"Uploaded {uploaded_count}/{total} items")
+
+        # Return True if most items succeeded (allow partial success)
+        return failed_count == 0 or uploaded_count > failed_count
 
     try:
         # 600 seconds (10 min) timeout for large uploads
@@ -407,7 +488,7 @@ def upload_files(host, user, key_path, local_dir, remote_dir):
     safe_remote = shlex.quote(remote_dir) if remote_dir else "'~/puppet'"
     chmod_cmd = [
         "ssh", "-i", key_path,
-        "-o", "StrictHostKeyChecking=no",
+        "-o", "StrictHostKeyChecking=accept-new",
         f"{user}@{host}",
         f"find {safe_remote} -name '*.py' -o -name '*.sh' | xargs chmod +x 2>/dev/null || true"
     ]
@@ -533,25 +614,27 @@ def get_remote_dir():
     return remote_dir
 
 def get_key_path():
-    """Get SSH key path"""
+    """Get SSH key path from user, remembers last used"""
     config = load_config()
+    last_key = config.get('key_path', '')
 
-    # Check if default key exists
-    if os.path.exists(Config.DEFAULT_KEY):
-        return Config.DEFAULT_KEY
+    print(f"\n{Colors.CYAN}SSH Key:{Colors.RESET}")
+    if last_key:
+        print(f"  Last used: {last_key}")
+        new_key = sanitize_input(input(f"Path [{last_key}]: "))
+        key_path = new_key if new_key else last_key
+    else:
+        key_path = sanitize_input(input(f"Path to SSH key: "))
 
-    # Check saved key
-    saved_key = config.get('key_path')
-    if saved_key and os.path.exists(saved_key):
-        return saved_key
+    if not key_path:
+        log("ERROR", "No SSH key provided")
+        return None
 
-    # Ask user
-    print(f"\n{Colors.YELLOW}SSH key not found at default location:{Colors.RESET}")
-    print(f"  {Config.DEFAULT_KEY}")
-
-    key_path = sanitize_input(input(f"\n{Colors.BOLD}Enter path to your .pem key: {Colors.RESET}"))
+    # Expand path
     key_path = os.path.expanduser(key_path)
+    key_path = os.path.abspath(key_path)
 
+    # Validate key exists
     if not os.path.exists(key_path):
         log("ERROR", f"Key not found: {key_path}")
         return None
@@ -573,6 +656,7 @@ def main():
     host = None
     key_path = None
     remote_dir = None
+    skip_cleanup = False
 
     args = sys.argv[1:]
     i = 0
@@ -587,6 +671,9 @@ def main():
         elif arg in ['--dir', '-d'] and i + 1 < len(args):
             remote_dir = args[i + 1]
             i += 2
+        elif arg == '--no-cleanup':
+            skip_cleanup = True
+            i += 1
         elif arg in ['--help', '-h']:
             print(f"""
 {Colors.BOLD}Usage:{Colors.RESET}
@@ -595,6 +682,7 @@ def main():
   python3 upload.py --ip 1.2.3.4                 # Use IP address
   python3 upload.py --dir ~/mydir               # Specify remote directory
   python3 upload.py --key /path/to/key.pem      # Specify SSH key
+  python3 upload.py --no-cleanup                 # Skip killing old processes
 
 {Colors.BOLD}Examples:{Colors.RESET}
   python3 upload.py ec2-54-211-76-29.compute-1.amazonaws.com
@@ -607,8 +695,9 @@ def main():
   (Remembers your last EC2, local directory, remote directory, and key path)
 
 {Colors.BOLD}What it does:{Colors.RESET}
-  - Asks for local directory to upload from (default: vuln_code/)
-  - Uploads ALL files from that directory to EC2
+  - Kills old puppetmaster processes on remote (use --no-cleanup to skip)
+  - Removes old puppetmaster directory on remote
+  - Uploads ALL files from local directory to EC2
   - Automatically makes .py and .sh files executable
 """)
             sys.exit(0)
@@ -654,6 +743,13 @@ def main():
         print("  2. Security group allows SSH (port 22)")
         print("  3. Correct key file")
         sys.exit(1)
+
+    # Cleanup old processes and files on remote (unless --no-cleanup)
+    print()
+    if not skip_cleanup:
+        cleanup_remote(host, Config.DEFAULT_USER, key_path, remote_dir)
+    else:
+        log("INFO", "Skipping cleanup (--no-cleanup flag set)")
 
     # Upload files
     print()

@@ -205,9 +205,9 @@ def print_os_banner(os_info: OSInfo) -> str:
 \033[92m╔═══════════════════════════════════════════════════════════════════════════════╗
 ║  ✓ KALI LINUX DETECTED                                                        ║
 ║                                                                               ║
-║  {os_info.os_name:<69} ║
-║  Kernel: {os_info.kernel:<62} ║
-║  Arch: {os_info.arch:<64} ║
+║  {os_info.os_name:<76} ║
+║  Kernel: {os_info.kernel:<68} ║
+║  Arch: {os_info.arch:<70} ║
 ║                                                                               ║
 ║  Enhanced PUPPETMASTER mode enabled.                                          ║
 ║  Auto-installing Kali security tools...                                       ║
@@ -216,7 +216,7 @@ def print_os_banner(os_info: OSInfo) -> str:
     else:
         return f"""
 \033[93m╔═══════════════════════════════════════════════════════════════════════════════╗
-║  OS DETECTED: {os_info.os_name:<57} ║
+║  OS DETECTED: {os_info.os_name:<63} ║
 ║                                                                               ║
 ║  Running standard PUPPETMASTER pipeline.                                      ║
 ║  For enhanced features, run on Kali Linux.                                    ║

@@ -48,3 +48,30 @@ domain_lists/*.txt
 # Config with private data
 config/*.json
 !config/.gitkeep
+
+# =============================================================================
+# SECURITY - NEVER commit these files!
+# =============================================================================
+# SSH Private Keys (PEM, PPK, etc.)
+*.pem
+*.key
+*.ppk
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+id_ecdsa
+
+# AWS Credentials
+.aws/
+*credentials*
+*.aws_credentials
+
+# Environment files with secrets
+.env
+.env.*
+*.env
+
+# Any file with "secret" in the name
+*secret*
+*SECRET*
