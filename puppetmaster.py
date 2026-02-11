@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 ╔═══════════════════════════════════════════════════════════════════════════════╗
 ║                                                                               ║
@@ -38,6 +39,70 @@ import shutil
 import json
 from datetime import datetime
 from pathlib import Path
+
+# Enable readline for arrow key support in input() prompts
+try:
+    import readline  # noqa: F401 - imported for side effects
+except ImportError:
+    pass  # readline not available on Windows
+
+# =============================================================================
+# KALI LINUX INTEGRATION
+# =============================================================================
+# Try to import Kali module for enhanced features
+try:
+    from kali.integration import (
+        kali_startup_check,
+        is_enhanced_mode,
+        print_enhanced_menu,
+        handle_enhanced_menu_choice,
+        get_kali_status_line,
+        should_show_kali_menu,
+        kali_expand_domains,
+    )
+    KALI_MODULE_AVAILABLE = True
+except ImportError:
+    KALI_MODULE_AVAILABLE = False
+    def is_enhanced_mode(): return False
+    def should_show_kali_menu(): return False
+    def get_kali_status_line(): return ""
+    def kali_expand_domains(domains, **kwargs): return domains
+
+# =============================================================================
+# CYBERPUNK HUD UI
+# =============================================================================
+# Try to import the new Cyberpunk HUD
+try:
+    from ui.integration import run_cyberpunk_hud_menu, map_hud_key_to_choice
+    CYBERPUNK_HUD_AVAILABLE = True
+    _HUD_IMPORT_ERROR = None
+except ImportError as e:
+    CYBERPUNK_HUD_AVAILABLE = False
+    _HUD_IMPORT_ERROR = str(e)
+
+# Try to import cyberpunk UI components for submenus
+try:
+    from ui.cyberpunk_ui import (
+        cyber_header, cyber_menu, cyber_info, cyber_success,
+        cyber_warning, cyber_error, cyber_prompt, cyber_confirm,
+        cyber_status, cyber_divider, cyber_table, CyberProgress, cyber_wait,
+        get_console,
+        # Themed banners for submenus
+        cyber_banner_discovery, cyber_banner_import, cyber_banner_spider,
+        cyber_banner_queue, cyber_banner_analysis, cyber_banner_wildcard,
+        cyber_banner_help, cyber_banner_config, cyber_banner_results,
+        cyber_banner_kali, cyber_banner_workflow
+    )
+    CYBER_UI_AVAILABLE = True
+except ImportError:
+    CYBER_UI_AVAILABLE = False
+
+# Toggle for Cyberpunk UI
+USE_CYBERPUNK_HUD = True
+
+# Backwards compatibility
+GAMING_HUD_AVAILABLE = CYBERPUNK_HUD_AVAILABLE
+USE_GAMING_HUD = USE_CYBERPUNK_HUD
 
 # =============================================================================
 # CONFIG FILE - Remember user's output directories
@@ -246,6 +311,53 @@ def get_elapsed_time_str():
 
 
 # =============================================================================
+# PATH SECURITY HELPERS
+# =============================================================================
+def is_safe_path(user_path: str, base_dir: str = None) -> bool:
+    """
+    Check if a path is safe (no path traversal).
+
+    Args:
+        user_path: User-provided path to check
+        base_dir: Optional base directory the path should stay within
+
+    Returns:
+        True if path is safe, False if it contains traversal attempts
+    """
+    # Expand user path
+    expanded = os.path.expanduser(user_path)
+    resolved = os.path.realpath(expanded)
+
+    # Check for obvious traversal attempts in the original input
+    if '..' in user_path:
+        return False
+
+    # If base_dir specified, ensure resolved path is within it
+    if base_dir:
+        base_resolved = os.path.realpath(os.path.expanduser(base_dir))
+        if not resolved.startswith(base_resolved):
+            return False
+
+    return True
+
+
+def sanitize_path(user_path: str, base_dir: str = None) -> str:
+    """
+    Sanitize a user-provided path, rejecting unsafe paths.
+
+    Args:
+        user_path: User-provided path
+        base_dir: Optional base directory to enforce
+
+    Returns:
+        Sanitized path or raises ValueError if unsafe
+    """
+    if not is_safe_path(user_path, base_dir):
+        raise ValueError(f"Unsafe path detected: {user_path}")
+    return os.path.realpath(os.path.expanduser(user_path))
+
+
+# =============================================================================
 # BANNER AND UI HELPERS
 # =============================================================================
 def clear_screen():
@@ -303,7 +415,7 @@ def print_banner():
 
     # Info lines - (text with color codes, visual length without colors)
     info_lines = [
-        (f"{C.WHITE}SpiderFoot Sock Puppet Detector v1.0{C.BRIGHT_CYAN}", 36),
+        (f"{C.WHITE}SpiderFoot Sock Puppet Detector v2.0{C.BRIGHT_CYAN}", 36),
         (f"{C.DIM}Vibe coded with Claude | Prompted by deliciousnoodles{C.RESET}{C.BRIGHT_CYAN}", 53),
         (f"{C.WHITE}{C.DIM}\"good morning coffee with bacon egg and cheese\"{C.RESET}{C.BRIGHT_CYAN}", 47),
     ]
@@ -343,7 +455,7 @@ def print_info(message):
     """Print an info message"""
     print(f"{C.BRIGHT_CYAN}ℹ {message}{C.RESET}")
 
-def get_input(prompt, default=None):
+def get_input(prompt, default=None, max_length=10000):
     """
     Get user input with a styled prompt.
     Returns None on Ctrl+C/Ctrl+D to signal cancellation.
@@ -356,6 +468,16 @@ def get_input(prompt, default=None):
 
     try:
         response = input(prompt_text).strip()
+        # Protect against paste bombs
+        if len(response) > max_length:
+            print(f"\n{C.BRIGHT_YELLOW}⚠ Input too long ({len(response)} chars). Truncated to {max_length}.{C.RESET}")
+            response = response[:max_length]
+        # Warn about suspicious input (likely accidental paste)
+        if '\n' in response or len(response) > 500:
+            line_count = response.count('\n') + 1
+            if line_count > 5:
+                print(f"\n{C.BRIGHT_YELLOW}⚠ Detected multi-line paste ({line_count} lines). Using first line only.{C.RESET}")
+                response = response.split('\n')[0].strip()
         return response if response else (default or "")
     except (EOFError, KeyboardInterrupt):
         print()  # Newline after ^C or ^D
@@ -367,7 +489,10 @@ def confirm(prompt, default=True):
     response = get_input(f"{prompt} [{default_str}]", "y" if default else "n")
     if response is None:
         return False  # Ctrl+C = cancel = no
-    return response.lower() in ('y', 'yes', '')
+    response = response.lower().strip()
+    if response == '':
+        return default  # Empty = use default
+    return response in ('y', 'yes')
 
 def animated_print(message, delay=0.03):
     """Print message with typing animation"""
@@ -379,11 +504,14 @@ def animated_print(message, delay=0.03):
 
 def progress_bar(current, total, prefix="Progress", length=40):
     """Display a progress bar"""
-    percent = current / total
+    if total <= 0:
+        percent = 0
+    else:
+        percent = current / total
     filled = int(length * percent)
     bar = "█" * filled + "░" * (length - filled)
     print(f"\r{C.BRIGHT_CYAN}{prefix}: [{bar}] {percent*100:.1f}%{C.RESET}", end="", flush=True)
-    if current == total:
+    if current == total and total > 0:
         print()  # New line when complete
 
 # =============================================================================
@@ -398,6 +526,10 @@ REQUIRED_PACKAGES = {
     'googlesearch': 'googlesearch-python',  # import name != pip name
     'ddgs': 'ddgs',  # DuckDuckGo search (renamed from duckduckgo_search)
     'community': 'python-louvain',  # Louvain clustering (essential for accurate cluster detection)
+    'dns': 'dnspython',  # DNS resolution for Wildcard DNS Analyzer
+    'simple_term_menu': 'simple-term-menu',  # Interactive domain review UI
+    'rich': 'rich',  # Gaming HUD UI
+    'psutil': 'psutil',  # System monitoring (CPU/MEM/DISK stats in HUD)
 }
 
 # Optional packages (currently none - all essential packages are required)
@@ -424,6 +556,56 @@ def check_pip_available():
         return result.returncode == 0
     except Exception:
         return False
+
+
+def is_debian_based():
+    """Check if running on Debian-based system (Debian, Ubuntu, Kali)"""
+    try:
+        with open('/etc/os-release', 'r') as f:
+            content = f.read().lower()
+            return any(x in content for x in ['debian', 'ubuntu', 'kali'])
+    except Exception:
+        return False
+
+
+def auto_install_pip():
+    """Auto-install pip on Debian-based systems"""
+    if not is_debian_based():
+        return False
+
+    print_info("pip not found. Auto-installing via apt...")
+
+    try:
+        # First update apt
+        result = subprocess.run(
+            ["sudo", "apt", "update"],
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+
+        # Install pip and venv
+        result = subprocess.run(
+            ["sudo", "apt", "install", "-y", "python3-pip", "python3-venv"],
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+
+        if result.returncode == 0:
+            print_success("pip installed successfully!")
+            return True
+        else:
+            print_error(f"Failed to install pip: {result.stderr[:200]}")
+            return False
+
+    except subprocess.TimeoutExpired:
+        print_error("Timeout while installing pip")
+        return False
+    except Exception as e:
+        print_error(f"Error installing pip: {e}")
+        return False
+
 
 def get_pip_install_instructions():
     """Get platform-specific pip installation instructions"""
@@ -713,8 +895,12 @@ def setup_environment():
 
     # Check if pip is available (only needed if we need to install)
     if not check_pip_available():
-        print(get_pip_install_instructions())
-        return False
+        # Try to auto-install pip on Debian-based systems (Kali, Ubuntu, Debian)
+        if not auto_install_pip():
+            print(get_pip_install_instructions())
+            return False
+
+    packages_installed = False
 
     if missing:
         print()
@@ -728,6 +914,7 @@ def setup_environment():
         if confirm("Would you like to install them now?"):
             if not install_dependencies(missing, optional=False):
                 return False
+            packages_installed = True
         else:
             print_error("Cannot proceed without required packages.")
             print_info("You can install manually with: pip install -r requirements.txt")
@@ -739,9 +926,19 @@ def setup_environment():
         print_warning(f"{len(optional_missing)} optional package(s) not installed: {', '.join(optional_missing)}")
         if confirm("Install optional packages?", default=True):
             install_dependencies(optional_missing, optional=True)
+            packages_installed = True
 
     print()
     print_success("Environment is ready!")
+
+    # If packages were installed, restart script to pick up new imports
+    # Must restart regardless of venv status - imports happen at module load time
+    if packages_installed:
+        print()
+        print_info("Restarting to load newly installed packages...")
+        time.sleep(1)
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+
     return True
 
 # =============================================================================
@@ -907,7 +1104,7 @@ def get_output_directory():
     if not os.path.exists(path):
         if confirm(f"Directory doesn't exist. Create it?"):
             try:
-                os.makedirs(path)
+                os.makedirs(path, exist_ok=True)
                 print_success(f"Created: {path}")
             except Exception as e:
                 print_error(f"Failed to create directory: {e}")
@@ -955,6 +1152,17 @@ def show_main_menu():
         config['domains_ready_for_scan'] = False
         save_config(config)
 
+    # Show Kali mode banner if active
+    if KALI_MODULE_AVAILABLE and is_enhanced_mode():
+        kali_status = get_kali_status_line()
+        print(f"""
+{C.BRIGHT_RED}╔═══════════════════════════════════════════════════════════════════════════════╗
+║  🐉 KALI LINUX ENHANCED MODE ACTIVE                                                        
+║     {kali_status:<69}                                                                       ║
+║     Option [1] auto-expands domains with Kali tools after scraping!                         ║
+╚═════════════════════════════════════════════════════════════════════════════════════════════╝{C.RESET}
+""")
+
     print(f"""
 {C.WHITE}{C.BOLD}Welcome to PUPPETMASTER!{C.RESET}
 {C.DIM}End-to-end sock puppet detection pipeline{C.RESET}
@@ -966,9 +1174,9 @@ websites that {C.UNDERLINE}appear{C.RESET}{C.DIM} independent but are secretly c
 
 {C.WHITE}The Pipeline:{C.RESET}
 {C.DIM}━━━━━━━━━━━━━{C.RESET}
-  {C.BRIGHT_CYAN}1. Discover{C.RESET}  Scrape search engines for competitor/suspicious domains
-  {C.BRIGHT_CYAN}2. Scan{C.RESET}     Run SpiderFoot OSINT scans (batch or interactive GUI)
-  {C.BRIGHT_CYAN}3. Analyze{C.RESET}  Detect shared infrastructure that proves common ownership
+  {C.BRIGHT_CYAN}1. Discover{C.RESET}  Scrape search engines for domains you suspect are sock puppets
+  {C.BRIGHT_CYAN}2. Scan{C.RESET}      Run SpiderFoot OSINT scans on scrapd list (batch or interactive GUI)
+  {C.BRIGHT_CYAN}3. Analyze{C.RESET}   Analyze spiderfoot scans to detect if there are any sock puppet clusters
 
 {C.WHITE}What We Find:{C.RESET}
 {C.DIM}━━━━━━━━━━━━━{C.RESET}
@@ -988,15 +1196,15 @@ websites that {C.UNDERLINE}appear{C.RESET}{C.DIM} independent but are secretly c
     print(f"  {C.BRIGHT_CYAN}DISCOVERY & SCANNING{C.RESET}")
     print_menu_item("1", "Scrape domains via keywords", "🔍")
     print_menu_item("2", "Load domains from file", "📂")
-    print_menu_item("3", "Run SpiderFoot scans (CLI batch mode)", "🕷️")
+    print_menu_item("3", "SpiderFoot Control Center (scans, GUI, DB)", "🕷️")
     print_menu_item("4", "Check scan queue status", "📋")
-    print_menu_item("11", "SpiderFoot Web GUI (interactive mode)", "🌐")
     print()
 
     # Analysis Section
     print(f"  {C.BRIGHT_GREEN}ANALYSIS{C.RESET}")
     print_menu_item("5", "Run Puppet Analysis on SpiderFoot scans", "🎭")
     print_menu_item("6", "View previous results", "📊")
+    print_menu_item("11", "Signal//Noise Wildcard DNS Analyzer", "📡")
     print()
 
     # Settings Section
@@ -1004,7 +1212,13 @@ websites that {C.UNDERLINE}appear{C.RESET}{C.DIM} independent but are secretly c
     print_menu_item("7", "Configuration", "⚙️")
     print_menu_item("8", "Help & Documentation", "❓")
     print_menu_item("9", "Launch in tmux (for long scans)", "🖥️")
-    print_menu_item("10", "System monitor (glances)", "📊")
+    print_menu_item("10", "System monitor (via Glances)", "📊")
+    print()
+
+    # Kali Enhanced Mode Section (only shown when Kali is detected)
+    if should_show_kali_menu():
+        print_enhanced_menu(print_func=print, colors=C)
+
     print_menu_item("q", "Quit", "👋")
     print()
 
@@ -1592,7 +1806,8 @@ Remote Server IP: {remote_ip}{C.RESET}
                 return
 
         # Build the SpiderFoot command for tmux
-        sf_cmd = f"{python_exe} {sf_path} -l 127.0.0.1:{port}"
+        # Use shlex.quote to prevent command injection via path variables
+        sf_cmd = f"{shlex.quote(python_exe)} {shlex.quote(str(sf_path))} -l 127.0.0.1:{port}"
 
         print()
         print_info(f"Starting SpiderFoot in tmux session '{session_name}'...")
@@ -1688,10 +1903,25 @@ Remote Server IP: {remote_ip}{C.RESET}
 def show_help():
     """Display help information"""
     clear_screen()
-    print_banner()
-    print_section("Help & Documentation", C.BRIGHT_BLUE)
 
-    print(f"""
+    # Use cyberpunk UI if available
+    if CYBER_UI_AVAILABLE:
+        console = get_console()
+        cyber_banner_help()
+        cyber_header("HELP & DOCUMENTATION")
+
+        console.print("[bold white]What would you like help with?[/]\n")
+        console.print("  [bold yellow][1][/] How PUPPETMASTER works")
+        console.print("  [bold yellow][2][/] SpiderFoot installation guide")
+        console.print("  [bold yellow][3][/] Signal types explained")
+        console.print("  [bold yellow][4][/] Output files explained")
+        console.print("  [bold yellow][5][/] Back to main menu")
+        console.print()
+    else:
+        print_banner()
+        print_section("Help & Documentation", C.BRIGHT_BLUE)
+
+        print(f"""
 {C.WHITE}What would you like help with?{C.RESET}
 
   {C.BRIGHT_YELLOW}[1]{C.RESET} How PUPPETMASTER works
@@ -1819,7 +2049,7 @@ def install_spiderfoot_interactive():
                 config['spiderfoot_python'] = sf_venv_python
                 save_config(config)
                 print_success(f"Saved to config!")
-                return sf_path
+                return (sf_path, sf_venv_python)
             else:
                 print_warning("SpiderFoot exists but verification failed.")
         except Exception as e:
@@ -2094,7 +2324,7 @@ def install_spiderfoot_interactive():
 {C.BRIGHT_GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{C.RESET}
 """)
 
-    return sf_path
+    return (sf_path, sf_venv_python)
 
 
 def show_spiderfoot_install_guide():
@@ -2319,10 +2549,34 @@ def show_help_outputs():
 def show_config():
     """Show configuration options"""
     clear_screen()
-    print_banner()
-    print_section("Configuration", C.BRIGHT_YELLOW)
 
-    print(f"""
+    # Use cyberpunk UI if available
+    if CYBER_UI_AVAILABLE:
+        console = get_console()
+        cyber_banner_config()
+        cyber_header("CONFIGURATION")
+
+        from rich.panel import Panel
+        from rich.text import Text
+
+        config_text = Text()
+        config_text.append("Configuration options coming soon...\n\n", style="dim italic")
+        config_text.append("Current settings:\n", style="bold white")
+        config_text.append("  ◈ Signal classification: ", style="dim")
+        config_text.append("Binary (Smoking Gun / Strong / Weak)\n", style="cyan")
+        config_text.append("  ◈ Community detection: ", style="dim")
+        config_text.append("Louvain + Label Propagation\n", style="cyan")
+        config_text.append("  ◈ Minimum cluster size: ", style="dim")
+        config_text.append("2 domains\n", style="cyan")
+        config_text.append("  ◈ Output format: ", style="dim")
+        config_text.append("Markdown + CSV + HTML", style="cyan")
+
+        console.print(Panel(config_text, title="[bold yellow]⟨ SYSTEM CONFIGURATION ⟩[/]", border_style="yellow"))
+    else:
+        print_banner()
+        print_section("Configuration", C.BRIGHT_YELLOW)
+
+        print(f"""
 {C.DIM}Configuration options coming soon...
 
 Current settings:
@@ -2394,32 +2648,55 @@ def find_results_directories():
 def view_previous_results():
     """View previous analysis results"""
     clear_screen()
-    print_banner()
-    print_section("Previous Results", C.BRIGHT_GREEN)
+
+    # Use cyberpunk UI if available
+    if CYBER_UI_AVAILABLE:
+        console = get_console()
+        cyber_banner_results()
+        cyber_header("PREVIOUS RESULTS")
+    else:
+        print_banner()
+        print_section("Previous Results", C.BRIGHT_GREEN)
 
     # Find all results directories
     results_dirs = find_results_directories()
 
     if not results_dirs:
-        print_warning("No previous results found.")
-        print_info("Results are identified by containing an 'executive_summary.md' file.")
-        print_info("Run a new analysis first, or check your output directory.")
-        print()
-        print(f"{C.DIM}Searched in:{C.RESET}")
-        print(f"  • Current directory: {Path('.').resolve()}")
-        print(f"  • Output directory:  {Path('output').resolve()}")
+        if CYBER_UI_AVAILABLE:
+            cyber_warning("No previous results found")
+            cyber_info("Results are identified by containing an 'executive_summary.md' file")
+            cyber_info("Run a new analysis first, or check your output directory")
+            console.print()
+            console.print("[dim]Searched in:[/]")
+            console.print(f"  ◈ Current directory: {Path('.').resolve()}")
+            console.print(f"  ◈ Output directory:  {Path('output').resolve()}")
+        else:
+            print_warning("No previous results found.")
+            print_info("Results are identified by containing an 'executive_summary.md' file.")
+            print_info("Run a new analysis first, or check your output directory.")
+            print()
+            print(f"{C.DIM}Searched in:{C.RESET}")
+            print(f"  • Current directory: {Path('.').resolve()}")
+            print(f"  • Output directory:  {Path('output').resolve()}")
     else:
-        print(f"Found {len(results_dirs)} previous analysis result(s):\n")
-        for i, d in enumerate(results_dirs[:10], 1):
-            # Get modification time and try to read scan info
-            mtime = datetime.fromtimestamp(d.stat().st_mtime)
-            # Show relative path if in current dir, otherwise full path
-            try:
-                display_path = d.relative_to(Path.cwd())
-            except ValueError:
-                display_path = d
-
-            print_menu_item(str(i), f"{display_path} ({mtime.strftime('%Y-%m-%d %H:%M')})", "📁")
+        if CYBER_UI_AVAILABLE:
+            console.print(f"Found [bold cyan]{len(results_dirs)}[/] previous analysis result(s):\n")
+            for i, d in enumerate(results_dirs[:10], 1):
+                mtime = datetime.fromtimestamp(d.stat().st_mtime)
+                try:
+                    display_path = d.relative_to(Path.cwd())
+                except ValueError:
+                    display_path = d
+                console.print(f"  [bold green][{i}][/] [cyan]{display_path}[/] [dim]({mtime.strftime('%Y-%m-%d %H:%M')})[/]")
+        else:
+            print(f"Found {len(results_dirs)} previous analysis result(s):\n")
+            for i, d in enumerate(results_dirs[:10], 1):
+                mtime = datetime.fromtimestamp(d.stat().st_mtime)
+                try:
+                    display_path = d.relative_to(Path.cwd())
+                except ValueError:
+                    display_path = d
+                print_menu_item(str(i), f"{display_path} ({mtime.strftime('%Y-%m-%d %H:%M')})", "")
 
         print()
         choice = get_input("Enter number to view, or press Enter to go back")
@@ -2429,11 +2706,19 @@ def view_previous_results():
             if 0 <= idx < len(results_dirs):
                 summary_path = results_dirs[idx] / "executive_summary.md"
                 if summary_path.exists():
-                    print(f"\n{C.CYAN}{'─' * 70}{C.RESET}")
-                    print(summary_path.read_text())
-                    print(f"{C.CYAN}{'─' * 70}{C.RESET}\n")
+                    if CYBER_UI_AVAILABLE:
+                        console.print(f"\n[cyan]{'─' * 70}[/]")
+                        console.print(summary_path.read_text())
+                        console.print(f"[cyan]{'─' * 70}[/]\n")
+                    else:
+                        print(f"\n{C.CYAN}{'─' * 70}{C.RESET}")
+                        print(summary_path.read_text())
+                        print(f"{C.CYAN}{'─' * 70}{C.RESET}\n")
                 else:
-                    print_warning("No executive summary found in that directory.")
+                    if CYBER_UI_AVAILABLE:
+                        cyber_warning("No executive summary found in that directory")
+                    else:
+                        print_warning("No executive summary found in that directory.")
 
     get_input("\nPress Enter to return to main menu...")
 
@@ -2481,17 +2766,188 @@ def run_domain_scrape(keywords, use_google, use_duckduckgo, max_results, existin
     return domains
 
 
+def interactive_domain_removal(domains: set) -> set:
+    """
+    Interactive UI for reviewing and removing domains.
+    Uses simple-term-menu for arrow key navigation with search.
+    Loops until user chooses to proceed.
+
+    Args:
+        domains: Set of domains to review
+
+    Returns:
+        Filtered set of domains (with removals applied)
+    """
+    if not domains:
+        return domains
+
+    # Try to import simple-term-menu
+    try:
+        from simple_term_menu import TerminalMenu
+    except ImportError:
+        print_warning("simple-term-menu not installed, skipping interactive review")
+        print_info("Install with: pip install simple-term-menu")
+        return domains
+
+    # Try to import blacklist for permanent additions
+    try:
+        from core.blacklist import add_to_blacklist
+        blacklist_available = True
+    except ImportError:
+        blacklist_available = False
+
+    current_domains = set(domains)  # Work with a copy
+
+    # Main review loop
+    while True:
+        sorted_domains = sorted(current_domains)
+        domain_count = len(sorted_domains)
+
+        # Show pre-review menu
+        print(f"\n{C.BRIGHT_CYAN}{'━' * 65}{C.RESET}")
+        print(f"  {C.BRIGHT_WHITE}DOMAIN REVIEW{C.RESET} {C.DIM}// {domain_count} domains{C.RESET}")
+        print(f"{C.BRIGHT_CYAN}{'━' * 65}{C.RESET}")
+
+        # Warn about large lists
+        if domain_count > 500:
+            print(f"\n  {C.BRIGHT_YELLOW}⚠ Large list ({domain_count} domains) - review may be slow{C.RESET}")
+
+        print(f"\n  {C.BRIGHT_MAGENTA}[r]{C.RESET} Review & remove domains (↑/↓ navigate, TAB select, / search)")
+        print(f"  {C.BRIGHT_MAGENTA}[d]{C.RESET} Done - proceed with {domain_count} domains")
+        print(f"  {C.BRIGHT_MAGENTA}[q]{C.RESET} Cancel\n")
+
+        choice = get_input("Choice", "d")
+        if choice is None or choice.lower() == 'q':
+            print_info("Cancelled")
+            return current_domains
+        elif choice.lower() == 'd':
+            print_success(f"Proceeding with {domain_count} domains")
+            return current_domains
+        elif choice.lower() != 'r':
+            print_success(f"Proceeding with {domain_count} domains")
+            return current_domains
+
+        # Show interactive picker
+        print(f"\n{C.BRIGHT_MAGENTA}{'━' * 65}{C.RESET}")
+        print(f"  {C.BRIGHT_WHITE}SELECT DOMAINS TO REMOVE{C.RESET}")
+        print(f"{C.BRIGHT_MAGENTA}{'━' * 65}{C.RESET}")
+        print(f"  {C.BRIGHT_CYAN}↑/↓{C.RESET} Navigate  {C.BRIGHT_CYAN}TAB{C.RESET} Toggle  {C.BRIGHT_CYAN}/{C.RESET} Search  {C.BRIGHT_CYAN}ESC{C.RESET} Exit search  {C.BRIGHT_CYAN}ENTER{C.RESET} Confirm")
+        print(f"{C.DIM}{'─' * 65}{C.RESET}\n")
+
+        try:
+            menu = TerminalMenu(
+                sorted_domains,
+                title=f"  [{domain_count} domains] - TAB to select, ENTER when done",
+                multi_select=True,
+                show_multi_select_hint=True,
+                multi_select_select_on_accept=False,
+                multi_select_empty_ok=True,
+                # Cyberpunk styling
+                menu_cursor="▸ ",
+                menu_cursor_style=("fg_purple", "bold"),
+                menu_highlight_style=("fg_cyan", "bold"),
+                search_key="/",
+                search_highlight_style=("fg_yellow", "bold"),
+                cycle_cursor=True,
+                clear_screen=False,
+            )
+
+            selected_indices = menu.show()
+
+        except Exception as e:
+            print_warning(f"Interactive menu failed: {e}")
+            continue  # Go back to review menu
+
+        # Handle no selection
+        if not selected_indices:
+            print_info("No domains selected")
+            continue  # Loop back to review menu
+
+        # Convert indices to domain names
+        to_remove = {sorted_domains[i] for i in selected_indices}
+
+        # Confirmation
+        print(f"\n{C.BRIGHT_YELLOW}{'═' * 65}{C.RESET}")
+        print(f"  {C.BRIGHT_WHITE}CONFIRM REMOVAL{C.RESET} - {len(to_remove)} domain(s) selected")
+        print(f"{C.DIM}{'─' * 65}{C.RESET}")
+
+        for d in sorted(to_remove)[:15]:
+            print(f"  {C.BRIGHT_RED}✗{C.RESET} {d}")
+        if len(to_remove) > 15:
+            print(f"  {C.DIM}... and {len(to_remove) - 15} more{C.RESET}")
+
+        print(f"{C.BRIGHT_YELLOW}{'═' * 65}{C.RESET}")
+
+        print(f"\n  {C.BRIGHT_CYAN}[1]{C.RESET} Remove (this session only)")
+        if blacklist_available:
+            print(f"  {C.BRIGHT_CYAN}[2]{C.RESET} Remove + add to permanent blacklist")
+        print(f"  {C.BRIGHT_CYAN}[3]{C.RESET} Cancel - go back\n")
+
+        confirm_choice = get_input("Choice", "1")
+
+        if confirm_choice == '1':
+            current_domains = current_domains - to_remove
+            print_success(f"Removed {len(to_remove)} domains ({len(current_domains)} remaining)")
+            # Loop continues - user can review more or choose [d] to proceed
+        elif confirm_choice == '2' and blacklist_available:
+            for d in to_remove:
+                add_to_blacklist(d, persistent=True)
+            current_domains = current_domains - to_remove
+            print_success(f"Removed {len(to_remove)} domains + added to permanent blacklist ({len(current_domains)} remaining)")
+            # Loop continues
+        else:
+            print_info("Cancelled - no changes made")
+            # Loop continues
+
+
 def show_scrape_results_menu(domains, keywords, use_google, use_duckduckgo, max_results):
     """Show post-scrape menu with options to view, re-run, add more, etc."""
     from discovery.scraper import DomainScraper
 
     while True:
         clear_screen()
-        print_banner()
-        print_section("Scrape Results", C.BRIGHT_GREEN)
 
-        # Show summary
-        print(f"""
+        # Use cyberpunk UI if available
+        if CYBER_UI_AVAILABLE:
+            console = get_console()
+            from rich.panel import Panel
+            from rich.text import Text
+
+            cyber_banner_discovery()
+            cyber_header("SCRAPE RESULTS")
+
+            # Show summary in panel
+            summary_text = Text()
+            summary_text.append("Current Working Set:\n", style="bold white")
+            summary_text.append("  Domains collected:  ", style="dim")
+            summary_text.append(f"{len(domains)}\n", style="bold green")
+            summary_text.append("  Keywords used:      ", style="dim")
+            summary_text.append(f"{len(keywords)}\n\n", style="white")
+            keywords_preview = ', '.join(keywords[:3]) + ('...' if len(keywords) > 3 else '')
+            summary_text.append(f"Last keywords: {keywords_preview}", style="dim italic")
+
+            console.print(Panel(summary_text, title="[bold green]⟨ RESULTS ⟩[/]", border_style="green"))
+            console.print()
+
+            console.print("[bold white]What would you like to do?[/]\n")
+            console.print("  [bold yellow]\\[1][/] View domains")
+            console.print("  [bold yellow]\\[2][/] Add more keywords (keep current domains)")
+            console.print("  [bold green]\\[A][/] Manually add domains")
+            console.print("  [bold yellow]\\[3][/] Re-run with same keywords")
+            console.print("  [bold yellow]\\[4][/] Start fresh (new keywords)")
+            console.print("  [bold yellow]\\[5][/] Save list to file")
+            console.print("  [bold magenta]\\[R][/] Review & remove domains")
+            if KALI_MODULE_AVAILABLE and is_enhanced_mode():
+                console.print("  [bold cyan]\\[K][/] Expand with Kali tools")
+            console.print("  [bold yellow]\\[6][/] Load into SpiderFoot scan queue")
+            console.print("  [bold yellow]\\[7][/] Back to main menu")
+            console.print()
+        else:
+            print_banner()
+            print_section("Scrape Results", C.BRIGHT_GREEN)
+
+            # Show summary
+            print(f"""
 {C.WHITE}Current Working Set:{C.RESET}
   Domains collected:  {C.BRIGHT_GREEN}{len(domains)}{C.RESET}
   Keywords used:      {len(keywords)}
@@ -2499,15 +2955,20 @@ def show_scrape_results_menu(domains, keywords, use_google, use_duckduckgo, max_
 {C.DIM}Last keywords: {', '.join(keywords[:3])}{'...' if len(keywords) > 3 else ''}{C.RESET}
 """)
 
-        print(f"{C.WHITE}What would you like to do?{C.RESET}\n")
-        print_menu_item("1", "View domains", f"{C.BRIGHT_RED}◆{C.RESET}")
-        print_menu_item("2", "Add more keywords (keep current domains)", f"{C.BRIGHT_RED}◆{C.RESET}")
-        print_menu_item("3", "Re-run with same keywords", f"{C.BRIGHT_RED}◆{C.RESET}")
-        print_menu_item("4", "Start fresh (new keywords)", f"{C.BRIGHT_RED}◆{C.RESET}")
-        print_menu_item("5", "Save to file", f"{C.BRIGHT_RED}◆{C.RESET}")
-        print_menu_item("6", "Load into SpiderFoot scan queue", f"{C.BRIGHT_RED}◆{C.RESET}")
-        print_menu_item("7", "Back to main menu", f"{C.BRIGHT_RED}◆{C.RESET}")
-        print()
+            print(f"{C.WHITE}What would you like to do?{C.RESET}\n")
+            print_menu_item("1", "View domains", f"{C.BRIGHT_RED}◆{C.RESET}")
+            print_menu_item("2", "Add more keywords (keep current domains)", f"{C.BRIGHT_RED}◆{C.RESET}")
+            print_menu_item("a", "Manually add domains", f"{C.BRIGHT_GREEN}◆{C.RESET}")
+            print_menu_item("3", "Re-run with same keywords", f"{C.BRIGHT_RED}◆{C.RESET}")
+            print_menu_item("4", "Start fresh (new keywords)", f"{C.BRIGHT_RED}◆{C.RESET}")
+            print_menu_item("5", "Save list to file", f"{C.BRIGHT_RED}◆{C.RESET}")
+            print_menu_item("r", "Review & remove domains", f"{C.BRIGHT_MAGENTA}◆{C.RESET}")
+            # Show Kali option if available
+            if KALI_MODULE_AVAILABLE and is_enhanced_mode():
+                print_menu_item("k", "Expand with Kali tools", f"{C.BRIGHT_CYAN}◆{C.RESET}")
+            print_menu_item("6", "Load into SpiderFoot scan queue", f"{C.BRIGHT_RED}◆{C.RESET}")
+            print_menu_item("7", "Back to main menu", f"{C.BRIGHT_RED}◆{C.RESET}")
+            print()
 
         choice = get_input("Choice", "6")
         if choice is None:
@@ -2590,26 +3051,104 @@ def show_scrape_results_menu(domains, keywords, use_google, use_duckduckgo, max_
             if confirm("Clear current domains and start with new keywords?"):
                 return None  # Signal to restart the whole flow
 
+        elif choice.lower() == "a":
+            # Manually add domains
+            clear_screen()
+            print_banner()
+            print_section("Manually Add Domains", C.BRIGHT_GREEN)
+
+            print(f"""
+{C.WHITE}Enter domains to add to your list.{C.RESET}
+{C.DIM}Single domain or comma-separated. URLs auto-cleaned (http:// stripped).{C.RESET}
+
+{C.DIM}Examples:{C.RESET}
+  example.com
+  example.com, another.com, third.com
+  https://example.com/page  {C.DIM}→ becomes: example.com{C.RESET}
+""")
+            domain_input = get_input("Domains")
+            if domain_input and domain_input.strip():
+                # Parse comma-separated domains
+                new_domains = []
+                for d in domain_input.split(','):
+                    d = d.strip().lower()
+                    # Basic cleanup - remove protocols
+                    if d.startswith('http://'):
+                        d = d[7:]
+                    elif d.startswith('https://'):
+                        d = d[8:]
+                    d = d.split('/')[0].strip()
+                    if d and '.' in d:
+                        new_domains.append(d)
+
+                if new_domains:
+                    before_count = len(domains)
+                    domains = domains | set(new_domains)
+                    added = len(domains) - before_count
+                    print(f"\n{C.GREEN}✓{C.RESET} Added {added} new domain(s)")
+                    print(f"  Total domains: {len(domains)}")
+                else:
+                    print_warning("No valid domains entered")
+            get_input("\nPress Enter to continue...")
+
         elif choice == "5":
-            # Save to file
+            # Save to file - with domain_lists directory
             from discovery.scraper import DomainScraper
             scraper = DomainScraper()
 
-            default_filename = f"domains_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-            print(f"\n{C.WHITE}Save location:{C.RESET}")
-            save_path = get_input("File path", default_filename)
+            # Determine domain_lists directory (relative to puppetmaster)
+            puppetmaster_dir = Path(__file__).parent
+            domain_lists_dir = puppetmaster_dir / "domain_lists"
 
-            if save_path:
-                save_path = os.path.expanduser(save_path)
-                save_dir = os.path.dirname(save_path)
-                if save_dir and not os.path.exists(save_dir):
-                    os.makedirs(save_dir)
+            print(f"""
+{C.WHITE}Save Domain List{C.RESET}
+{C.DIM}Lists are saved to: {domain_lists_dir}{C.RESET}
 
-                if scraper.save_to_file(save_path, domains):
-                    print_success(f"Saved {len(domains)} domains to: {save_path}")
+  {C.BRIGHT_YELLOW}[1]{C.RESET} Auto-name with timestamp
+  {C.BRIGHT_YELLOW}[2]{C.RESET} Enter custom name
+  {C.BRIGHT_YELLOW}[3]{C.RESET} Save to custom path
+""")
+            save_choice = get_input("Choice", "1")
+
+            if save_choice == "1":
+                # Auto timestamp name
+                filename = f"domains_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                save_path = domain_lists_dir / filename
+            elif save_choice == "2":
+                # Custom name
+                custom_name = get_input("Enter list name (without .txt)")
+                if custom_name and custom_name.strip():
+                    # Sanitize filename
+                    safe_name = "".join(c for c in custom_name.strip() if c.isalnum() or c in '-_').strip()
+                    if safe_name:
+                        save_path = domain_lists_dir / f"{safe_name}.txt"
+                    else:
+                        print_warning("Invalid name, using timestamp")
+                        filename = f"domains_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                        save_path = domain_lists_dir / filename
                 else:
-                    print_error("Failed to save file.")
-                get_input("\nPress Enter to continue...")
+                    filename = f"domains_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                    save_path = domain_lists_dir / filename
+            elif save_choice == "3":
+                # Custom path
+                default_filename = f"domains_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                user_path = get_input("File path", default_filename)
+                if user_path:
+                    save_path = Path(os.path.expanduser(user_path))
+                else:
+                    save_path = domain_lists_dir / default_filename
+            else:
+                filename = f"domains_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                save_path = domain_lists_dir / filename
+
+            # Ensure directory exists
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+
+            if scraper.save_to_file(str(save_path), domains):
+                print_success(f"Saved {len(domains)} domains to: {save_path}")
+            else:
+                print_error("Failed to save file.")
+            get_input("\nPress Enter to continue...")
 
         elif choice == "6":
             # Load into SpiderFoot queue
@@ -2632,6 +3171,19 @@ def show_scrape_results_menu(domains, keywords, use_google, use_duckduckgo, max_
             time.sleep(1.5)
             break  # Return to main menu
 
+        elif choice.lower() == "r":
+            # Review & remove domains interactively
+            domains = interactive_domain_removal(domains)
+
+        elif choice.lower() == "k":
+            # Expand with Kali tools
+            if KALI_MODULE_AVAILABLE and is_enhanced_mode():
+                domains = kali_expand_domains(domains, print_func=print, get_input_func=get_input)
+                get_input("\nPress Enter to continue...")
+            else:
+                print_warning("Kali enhanced mode not available")
+                get_input("\nPress Enter to continue...")
+
         elif choice == "7":
             # Save state before exiting
             config = load_config()
@@ -2646,24 +3198,39 @@ def show_scrape_results_menu(domains, keywords, use_google, use_duckduckgo, max_
 def scrape_domains_menu():
     """Menu for scraping domains via keywords"""
     clear_screen()
-    print_banner()
-    print_section("Scrape Domains via Keywords", C.BRIGHT_CYAN)
+
+    # Use cyberpunk UI if available
+    if CYBER_UI_AVAILABLE:
+        cyber_banner_discovery()
+    else:
+        print_banner()
+        print_section("Scrape Domains via Keywords", C.BRIGHT_CYAN)
 
     # Check dependencies
     try:
         from discovery.scraper import DomainScraper
     except ImportError as e:
-        print_error(f"Discovery module not available: {e}")
-        print_info("Make sure you're running from the correct directory.")
-        get_input("\nPress Enter to return to main menu...")
+        if CYBER_UI_AVAILABLE:
+            cyber_error(f"Discovery module not available: {e}")
+            cyber_info("Make sure you're running from the correct directory.")
+            cyber_prompt("Press Enter to return to main menu")
+        else:
+            print_error(f"Discovery module not available: {e}")
+            print_info("Make sure you're running from the correct directory.")
+            get_input("\nPress Enter to return to main menu...")
         return
 
     # Check if search libraries are available
     deps = DomainScraper.check_dependencies()
     if not deps['google'] and not deps['duckduckgo']:
-        print_error("No search libraries available!")
-        print_info("Install with: pip install googlesearch-python duckduckgo_search")
-        get_input("\nPress Enter to return to main menu...")
+        if CYBER_UI_AVAILABLE:
+            cyber_error("No search libraries available!")
+            cyber_info("Install with: pip install googlesearch-python duckduckgo_search")
+            cyber_prompt("Press Enter to return to main menu")
+        else:
+            print_error("No search libraries available!")
+            print_info("Install with: pip install googlesearch-python duckduckgo_search")
+            get_input("\nPress Enter to return to main menu...")
         return
 
     # Check for previous session
@@ -2672,19 +3239,29 @@ def scrape_domains_menu():
     last_keywords = config.get('last_scrape_keywords', [])
 
     if last_domains:
-        print(f"""
+        if CYBER_UI_AVAILABLE:
+            console = get_console()
+            console.print(f"\n[bright_yellow]Previous session found:[/]")
+            console.print(f"  [dim]Domains:[/] [bright_green]{len(last_domains)}[/]")
+            console.print(f"  [dim]Keywords:[/] [bright_cyan]{', '.join(last_keywords[:3])}{'...' if len(last_keywords) > 3 else ''}[/]\n")
+            console.print("  [bright_yellow][1][/] Continue with previous results")
+            console.print("  [bright_yellow][2][/] Add new keywords (merge with existing)")
+            console.print("  [bright_red][3][/] Clear all & start fresh\n")
+            resume_choice = cyber_prompt("Choice", "1")
+        else:
+            print(f"""
 {C.BRIGHT_YELLOW}Previous session found:{C.RESET}
   Domains: {len(last_domains)}
   Keywords: {', '.join(last_keywords[:3])}{'...' if len(last_keywords) > 3 else ''}
 """)
-        print_menu_item("1", "Continue with previous results", "▶️")
-        print_menu_item("2", "Start fresh", "🆕")
-        print()
+            print_menu_item("1", "Continue with previous results", "▶️")
+            print_menu_item("2", "Add new keywords (merge with existing)", "➕")
+            print_menu_item("3", "Clear all & start fresh", "🆕")
+            print()
+            resume_choice = get_input("Choice", "1")
 
-        resume_choice = get_input("Choice", "1")
         if resume_choice == "1":
             # Resume previous session
-            # Need to get search engine settings
             use_google = deps['google']
             use_duckduckgo = deps['duckduckgo']
             max_results = 50
@@ -2694,16 +3271,77 @@ def scrape_domains_menu():
                 use_google, use_duckduckgo, max_results
             )
             if result is None:
-                # User chose to start fresh, continue below
                 pass
             else:
                 return
 
-        clear_screen()
-        print_banner()
-        print_section("Scrape Domains via Keywords", C.BRIGHT_CYAN)
+        elif resume_choice == "2":
+            # Add new keywords but merge with existing domains
+            use_google = deps['google']
+            use_duckduckgo = deps['duckduckgo']
+            max_results = 50
+            existing_domains = set(last_domains)
 
-    print(f"""
+            clear_screen()
+            if CYBER_UI_AVAILABLE:
+                cyber_banner_discovery()
+                console = get_console()
+                console.print(f"\n[bright_green]Keeping {len(existing_domains)} existing domains[/]")
+                console.print("[white]Enter additional keywords to search for more domains.[/]")
+                console.print("[dim]Separate multiple keywords with commas.[/]\n")
+            else:
+                print_banner()
+                print_section("Add More Keywords", C.BRIGHT_CYAN)
+                print(f"\n{C.GREEN}Keeping {len(existing_domains)} existing domains{C.RESET}")
+                print(f"\n{C.WHITE}Enter additional keywords to search for more domains.{C.RESET}")
+                print(f"{C.DIM}Separate multiple keywords with commas.{C.RESET}\n")
+
+            if CYBER_UI_AVAILABLE:
+                keywords_input = cyber_prompt("Keywords")
+            else:
+                keywords_input = get_input("Keywords")
+
+            if keywords_input and keywords_input.strip():
+                new_keywords = [k.strip() for k in keywords_input.split(',') if k.strip()]
+                if new_keywords:
+                    new_domains = run_domain_scrape(
+                        new_keywords, use_google, use_duckduckgo, max_results,
+                        existing_domains=existing_domains
+                    )
+                    # Merge keywords
+                    all_keywords = last_keywords + [k for k in new_keywords if k not in last_keywords]
+                    added = len(new_domains) - len(existing_domains)
+                    print(f"\n{C.GREEN}✓{C.RESET} Added {added} new unique domains")
+                    print(f"  Total domains: {len(new_domains)}")
+                    get_input("\nPress Enter to continue...")
+
+                    # Go to results menu with merged data
+                    result = show_scrape_results_menu(
+                        new_domains, all_keywords,
+                        use_google, use_duckduckgo, max_results
+                    )
+                    if result is not None:
+                        return
+            return
+
+        # resume_choice == "3" or anything else: clear and start fresh
+        clear_screen()
+        if CYBER_UI_AVAILABLE:
+            cyber_banner_discovery()
+        else:
+            print_banner()
+            print_section("Scrape Domains via Keywords", C.BRIGHT_CYAN)
+
+    if CYBER_UI_AVAILABLE:
+        console = get_console()
+        console.print("\n[white]Enter keywords to search for domains.[/]")
+        console.print("[dim]Separate multiple keywords with commas.[/]\n")
+        console.print("[dim]Examples:[/]")
+        console.print("  [bright_cyan]•[/] electrical contractors NYC, electrical services New York")
+        console.print("  [bright_cyan]•[/] plastic surgery clinic, cosmetic surgeon")
+        console.print("  [bright_cyan]•[/] online tutoring, math help\n")
+    else:
+        print(f"""
 {C.WHITE}Enter keywords to search for domains.{C.RESET}
 {C.DIM}Separate multiple keywords with commas.{C.RESET}
 
@@ -2714,55 +3352,98 @@ def scrape_domains_menu():
 """)
 
     # Get keywords
-    keywords_input = get_input("Keywords")
+    if CYBER_UI_AVAILABLE:
+        keywords_input = cyber_prompt("Keywords")
+    else:
+        keywords_input = get_input("Keywords")
     if keywords_input is None or not keywords_input.strip():
-        print_info("Cancelled.")
-        get_input("\nPress Enter to return to main menu...")
+        if CYBER_UI_AVAILABLE:
+            cyber_info("Cancelled.")
+            cyber_prompt("Press Enter to return to main menu")
+        else:
+            print_info("Cancelled.")
+            get_input("\nPress Enter to return to main menu...")
         return
 
     keywords = [k.strip() for k in keywords_input.split(',') if k.strip()]
     if not keywords:
-        print_error("No valid keywords provided.")
-        get_input("\nPress Enter to return to main menu...")
+        if CYBER_UI_AVAILABLE:
+            cyber_error("No valid keywords provided.")
+            cyber_prompt("Press Enter to return to main menu")
+        else:
+            print_error("No valid keywords provided.")
+            get_input("\nPress Enter to return to main menu...")
         return
 
-    print(f"\n{C.GREEN}✓{C.RESET} {len(keywords)} keyword(s) entered\n")
-
-    # Choose search engine
-    print(f"{C.WHITE}Search engine:{C.RESET}")
-    if deps['google']:
-        print_menu_item("1", "Google (no API key, uses delays to avoid blocking)", "")
+    if CYBER_UI_AVAILABLE:
+        cyber_success(f"{len(keywords)} keyword(s) entered")
+        console = get_console()
+        console.print("\n[white]Search engine:[/]")
+        if deps['google']:
+            console.print("  [bright_yellow][1][/] Google [dim](no API key, uses delays)[/]")
+        else:
+            console.print("  [dim][1] Google (not available)[/]")
+        if deps['duckduckgo']:
+            console.print("  [bright_yellow][2][/] DuckDuckGo [dim](no API key, reliable)[/]")
+        else:
+            console.print("  [dim][2] DuckDuckGo (not available)[/]")
+        if deps['google'] and deps['duckduckgo']:
+            console.print("  [bright_yellow][3][/] Both [dim](recommended)[/]")
+        console.print()
     else:
-        print(f"  {C.DIM}[1] Google (not available - install googlesearch-python){C.RESET}")
-    if deps['duckduckgo']:
-        print_menu_item("2", "DuckDuckGo (no API key, more reliable)", "")
-    else:
-        print(f"  {C.DIM}[2] DuckDuckGo (not available - install duckduckgo_search){C.RESET}")
-    if deps['google'] and deps['duckduckgo']:
-        print_menu_item("3", "Both (searches both, combines results)", "")
-    print()
+        print(f"\n{C.GREEN}✓{C.RESET} {len(keywords)} keyword(s) entered\n")
+        print(f"{C.WHITE}Search engine:{C.RESET}")
+        if deps['google']:
+            print_menu_item("1", "Google (no API key, uses delays to avoid blocking)", "")
+        else:
+            print(f"  {C.DIM}[1] Google (not available - install googlesearch-python){C.RESET}")
+        if deps['duckduckgo']:
+            print_menu_item("2", "DuckDuckGo (no API key, more reliable)", "")
+        else:
+            print(f"  {C.DIM}[2] DuckDuckGo (not available - install duckduckgo_search){C.RESET}")
+        if deps['google'] and deps['duckduckgo']:
+            print_menu_item("3", "Both (searches both, combines results)", "")
+        print()
 
     # Default to what's available
     default_engine = "3" if (deps['google'] and deps['duckduckgo']) else ("1" if deps['google'] else "2")
-    engine_choice = get_input(f"Choice", default_engine)
+    if CYBER_UI_AVAILABLE:
+        engine_choice = cyber_prompt("Choice", default_engine)
+    else:
+        engine_choice = get_input(f"Choice", default_engine)
     if engine_choice is None:
-        print_info("Cancelled.")
-        get_input("\nPress Enter to return to main menu...")
+        if CYBER_UI_AVAILABLE:
+            cyber_info("Cancelled.")
+            cyber_prompt("Press Enter to return to main menu")
+        else:
+            print_info("Cancelled.")
+            get_input("\nPress Enter to return to main menu...")
         return
 
     use_google = engine_choice in ('1', '3') and deps['google']
     use_duckduckgo = engine_choice in ('2', '3') and deps['duckduckgo']
 
     if not use_google and not use_duckduckgo:
-        print_error("No search engine selected.")
-        get_input("\nPress Enter to return to main menu...")
+        if CYBER_UI_AVAILABLE:
+            cyber_error("No search engine selected.")
+            cyber_prompt("Press Enter to return to main menu")
+        else:
+            print_error("No search engine selected.")
+            get_input("\nPress Enter to return to main menu...")
         return
 
     # Max results per keyword
-    max_results = get_input("Max results per keyword", "50")
+    if CYBER_UI_AVAILABLE:
+        max_results = cyber_prompt("Max results per keyword", "50")
+    else:
+        max_results = get_input("Max results per keyword", "50")
     if max_results is None:
-        print_info("Cancelled.")
-        get_input("\nPress Enter to return to main menu...")
+        if CYBER_UI_AVAILABLE:
+            cyber_info("Cancelled.")
+            cyber_prompt("Press Enter to return to main menu")
+        else:
+            print_info("Cancelled.")
+            get_input("\nPress Enter to return to main menu...")
         return
     try:
         max_results = int(max_results)
@@ -2773,7 +3454,15 @@ def scrape_domains_menu():
     domains = run_domain_scrape(keywords, use_google, use_duckduckgo, max_results)
 
     # Show results summary
-    print(f"""
+    if CYBER_UI_AVAILABLE:
+        console = get_console()
+        console.print("\n[bright_green]" + "━" * 60 + "[/]")
+        cyber_success("Scraping complete!")
+        console.print(f"  [dim]Keywords searched:[/]    [bright_cyan]{len(keywords)}[/]")
+        console.print(f"  [dim]Unique domains found:[/] [bright_green]{len(domains)}[/]")
+        console.print("[bright_green]" + "━" * 60 + "[/]\n")
+    else:
+        print(f"""
 {C.BRIGHT_GREEN}{'━' * 60}{C.RESET}
 {C.GREEN}✓{C.RESET} Scraping complete!
 
@@ -2783,11 +3472,87 @@ def scrape_domains_menu():
 """)
 
     if not domains:
-        print_warning("No domains found. Try different keywords.")
-        get_input("\nPress Enter to return to main menu...")
+        if CYBER_UI_AVAILABLE:
+            cyber_warning("No domains found. Try different keywords.")
+            cyber_prompt("Press Enter to return to main menu")
+        else:
+            print_warning("No domains found. Try different keywords.")
+            get_input("\nPress Enter to return to main menu...")
         return
 
-    get_input("Press Enter to continue to results menu...")
+    # BLACKLIST FILTER: Remove known platform domains
+    try:
+        from core.blacklist import filter_domains, get_blacklist_stats
+
+        original_count = len(domains)
+        clean_domains, blocked_domains = filter_domains(domains)
+
+        if blocked_domains:
+            stats = get_blacklist_stats()
+            if CYBER_UI_AVAILABLE:
+                console = get_console()
+                console.print("\n[bright_yellow]" + "━" * 60 + "[/]")
+                console.print("[bright_yellow]BLACKLIST FILTER[/]\n")
+                console.print(f"  [bright_red]Filtered out:[/] {len(blocked_domains)} platform domains")
+                console.print(f"  [bright_green]Remaining:[/]    {len(clean_domains)} target domains\n")
+                console.print(f"  [dim]Blacklisted: {', '.join(sorted(blocked_domains)[:5])}{'...' if len(blocked_domains) > 5 else ''}[/]")
+                console.print("[bright_yellow]" + "━" * 60 + "[/]\n")
+                console.print(f"  [bright_yellow][1][/] Use filtered list ({len(clean_domains)} domains) [dim]- recommended[/]")
+                console.print(f"  [bright_yellow][2][/] Keep all domains ({original_count} domains)")
+                console.print(f"  [bright_yellow][3][/] View all filtered domains\n")
+                filter_choice = cyber_prompt("Choice", "1") or "1"
+            else:
+                print(f"""
+{C.BRIGHT_YELLOW}{'━' * 60}{C.RESET}
+{C.YELLOW}BLACKLIST FILTER{C.RESET}
+
+  {C.RED}Filtered out:{C.RESET} {len(blocked_domains)} platform domains
+  {C.GREEN}Remaining:{C.RESET}    {len(clean_domains)} target domains
+
+  {C.DIM}Blacklisted: {', '.join(sorted(blocked_domains)[:5])}{'...' if len(blocked_domains) > 5 else ''}{C.RESET}
+{C.BRIGHT_YELLOW}{'━' * 60}{C.RESET}
+""")
+                print(f"  [1] Use filtered list ({len(clean_domains)} domains) - recommended")
+                print(f"  [2] Keep all domains ({original_count} domains)")
+                print(f"  [3] View all filtered domains")
+                print()
+                filter_choice = get_input("Choice [1]: ") or "1"
+
+            if filter_choice == "3":
+                if CYBER_UI_AVAILABLE:
+                    console.print("\n  [dim]Filtered domains:[/]")
+                    for d in sorted(blocked_domains):
+                        console.print(f"    [bright_red]✗[/] {d}")
+                    console.print()
+                    filter_choice = cyber_prompt("Use filtered list? [Y/n]") or "y"
+                else:
+                    print(f"\n  {C.DIM}Filtered domains:{C.RESET}")
+                    for d in sorted(blocked_domains):
+                        print(f"    {C.RED}✗{C.RESET} {d}")
+                    print()
+                    filter_choice = get_input("Use filtered list? [Y/n]: ") or "y"
+                if filter_choice.lower() != 'n':
+                    domains = clean_domains
+            elif filter_choice == "2":
+                if CYBER_UI_AVAILABLE:
+                    cyber_info("Keeping all domains (including platforms)")
+                else:
+                    print_info("Keeping all domains (including platforms)")
+            else:
+                domains = clean_domains
+                if CYBER_UI_AVAILABLE:
+                    cyber_success(f"Using {len(domains)} filtered domains")
+                else:
+                    print_success(f"Using {len(domains)} filtered domains")
+
+    except ImportError:
+        pass  # Blacklist module not available, skip filtering
+
+    # Note: Interactive domain review and Kali expansion are now in the Results Menu
+    if CYBER_UI_AVAILABLE:
+        cyber_prompt("Press Enter to continue to results menu")
+    else:
+        get_input("Press Enter to continue to results menu...")
 
     # Show results menu
     while True:
@@ -2795,7 +3560,6 @@ def scrape_domains_menu():
             domains, keywords, use_google, use_duckduckgo, max_results
         )
         if result is None:
-            # User chose to start fresh, restart the whole flow
             scrape_domains_menu()
             return
         else:
@@ -2805,17 +3569,112 @@ def scrape_domains_menu():
 def load_domains_menu():
     """Menu for loading domains from a file"""
     clear_screen()
-    print_banner()
-    print_section("Load Domains from File", C.BRIGHT_CYAN)
+
+    # Use cyberpunk UI if available
+    if CYBER_UI_AVAILABLE:
+        cyber_banner_import()
+    else:
+        print_banner()
+        print_section("Load Domains from File", C.BRIGHT_CYAN)
 
     try:
         from discovery.scraper import DomainScraper
     except ImportError as e:
-        print_error(f"Discovery module not available: {e}")
-        get_input("\nPress Enter to return to main menu...")
+        if CYBER_UI_AVAILABLE:
+            cyber_error(f"Discovery module not available: {e}")
+            cyber_prompt("Press Enter to return to main menu")
+        else:
+            print_error(f"Discovery module not available: {e}")
+            get_input("\nPress Enter to return to main menu...")
         return
 
-    print(f"""
+    # Check for saved lists in domain_lists directory
+    puppetmaster_dir = Path(__file__).parent
+    domain_lists_dir = puppetmaster_dir / "domain_lists"
+    available_lists = []
+
+    if domain_lists_dir.exists():
+        for txt_file in sorted(domain_lists_dir.glob("*.txt"), key=lambda x: x.stat().st_mtime, reverse=True):
+            try:
+                # Count domains and get file info
+                with open(txt_file, 'r') as f:
+                    domain_count = sum(1 for line in f if line.strip() and not line.strip().startswith('#'))
+                mod_time = datetime.fromtimestamp(txt_file.stat().st_mtime).strftime('%Y-%m-%d %H:%M')
+                available_lists.append({
+                    'path': txt_file,
+                    'name': txt_file.name,
+                    'domains': domain_count,
+                    'modified': mod_time
+                })
+            except Exception:
+                pass
+
+    # Show available lists if any exist
+    if available_lists:
+        if CYBER_UI_AVAILABLE:
+            console = get_console()
+            console.print("\n[bold white]Available Domain Lists:[/]")
+            console.print(f"[dim]Saved in: {domain_lists_dir}[/]\n")
+            for i, lst in enumerate(available_lists[:10], 1):
+                console.print(f"  [bold yellow]\\[{i}][/] {lst['name']}")
+                console.print(f"      [dim]{lst['domains']} domains • {lst['modified']}[/]")
+            if len(available_lists) > 10:
+                console.print(f"  [dim]... and {len(available_lists) - 10} more files[/]")
+            console.print(f"\n  [bold cyan]\\[C][/] Enter custom file path")
+            console.print()
+            list_choice = cyber_prompt("Select list", "1")
+        else:
+            print(f"\n{C.WHITE}Available Domain Lists:{C.RESET}")
+            print(f"{C.DIM}Saved in: {domain_lists_dir}{C.RESET}\n")
+            for i, lst in enumerate(available_lists[:10], 1):
+                print(f"  {C.BRIGHT_YELLOW}[{i}]{C.RESET} {lst['name']}")
+                print(f"      {C.DIM}{lst['domains']} domains • {lst['modified']}{C.RESET}")
+            if len(available_lists) > 10:
+                print(f"  {C.DIM}... and {len(available_lists) - 10} more files{C.RESET}")
+            print(f"\n  {C.BRIGHT_CYAN}[C]{C.RESET} Enter custom file path")
+            print()
+            list_choice = get_input("Select list", "1")
+
+        # Handle selection
+        file_path = None
+        if list_choice and list_choice.lower() == 'c':
+            # Custom path input
+            if CYBER_UI_AVAILABLE:
+                console = get_console()
+                console.print("\n[white]Enter path to domain file:[/]")
+                file_path = cyber_prompt("File path")
+            else:
+                print(f"\n{C.WHITE}Enter path to domain file:{C.RESET}")
+                file_path = get_input("File path")
+        elif list_choice and list_choice.isdigit():
+            idx = int(list_choice) - 1
+            if 0 <= idx < len(available_lists):
+                file_path = str(available_lists[idx]['path'])
+            else:
+                print_warning("Invalid selection")
+                get_input("\nPress Enter to return to main menu...")
+                return
+        else:
+            # Default to first list if nothing entered
+            if available_lists:
+                file_path = str(available_lists[0]['path'])
+            else:
+                return
+    else:
+        # No saved lists, show traditional input
+        if CYBER_UI_AVAILABLE:
+            console = get_console()
+            console.print("\n[white]Load a list of domains from a text file.[/]")
+            console.print("[dim]File should contain one domain per line.[/]\n")
+            console.print("[dim]Example file format:[/]")
+            console.print("  [bright_green]example1.com[/]")
+            console.print("  [bright_green]example2.com[/]")
+            console.print("  [bright_green]www.example3.com[/]")
+            console.print("  [bright_cyan]https://example4.com/page[/]  [dim](URLs will be parsed)[/]\n")
+            console.print(f"[dim]Tip: Save lists from option [1] to {domain_lists_dir}[/]\n")
+            file_path = cyber_prompt("Enter path to file")
+        else:
+            print(f"""
 {C.WHITE}Load a list of domains from a text file.{C.RESET}
 {C.DIM}File should contain one domain per line.{C.RESET}
 
@@ -2824,35 +3683,60 @@ def load_domains_menu():
   example2.com
   www.example3.com
   https://example4.com/page  {C.DIM}(URLs will be parsed){C.RESET}
-""")
 
-    # Get file path
-    file_path = get_input("Enter path to file")
+{C.DIM}Tip: Save lists from option [1] to {domain_lists_dir}{C.RESET}
+""")
+            file_path = get_input("Enter path to file")
     if file_path is None or not file_path.strip():
-        print_info("Cancelled.")
-        get_input("\nPress Enter to return to main menu...")
+        if CYBER_UI_AVAILABLE:
+            cyber_info("Cancelled.")
+            cyber_prompt("Press Enter to return to main menu")
+        else:
+            print_info("Cancelled.")
+            get_input("\nPress Enter to return to main menu...")
         return
 
     file_path = os.path.expanduser(file_path.strip())
 
     # Check file exists
     if not os.path.exists(file_path):
-        print_error(f"File not found: {file_path}")
-        get_input("\nPress Enter to return to main menu...")
+        if CYBER_UI_AVAILABLE:
+            cyber_error(f"File not found: {file_path}")
+            cyber_prompt("Press Enter to return to main menu")
+        else:
+            print_error(f"File not found: {file_path}")
+            get_input("\nPress Enter to return to main menu...")
         return
 
     if not os.path.isfile(file_path):
-        print_error("That's not a file.")
-        get_input("\nPress Enter to return to main menu...")
+        if CYBER_UI_AVAILABLE:
+            cyber_error("That's not a file.")
+            cyber_prompt("Press Enter to return to main menu")
+        else:
+            print_error("That's not a file.")
+            get_input("\nPress Enter to return to main menu...")
         return
 
     # Load and validate
-    print_section("Validating File", C.BRIGHT_MAGENTA)
+    if CYBER_UI_AVAILABLE:
+        console = get_console()
+        console.print("\n[bright_magenta]" + "━" * 50 + "[/]")
+        console.print("[bright_magenta]VALIDATING FILE[/]")
+        console.print("[bright_magenta]" + "━" * 50 + "[/]\n")
+    else:
+        print_section("Validating File", C.BRIGHT_MAGENTA)
 
     scraper = DomainScraper()
     valid_domains, invalid_lines = scraper.load_from_file(file_path)
 
-    print(f"""
+    if CYBER_UI_AVAILABLE:
+        console = get_console()
+        cyber_success(f"File found: {os.path.basename(file_path)}")
+        console.print("\n[dim]Parsing domains...[/]")
+        console.print(f"  [bright_cyan]•[/] Valid domains:     [bright_green]{len(valid_domains)}[/]")
+        console.print(f"  [bright_cyan]•[/] Invalid/skipped:   [bright_yellow]{len(invalid_lines)}[/]\n")
+    else:
+        print(f"""
 {C.GREEN}✓{C.RESET} File found: {os.path.basename(file_path)}
 
 Parsing domains...
@@ -2862,50 +3746,984 @@ Parsing domains...
 
     # Show invalid lines (up to 5)
     if invalid_lines:
-        print(f"{C.DIM}Invalid lines:{C.RESET}")
-        for line_num, line, reason in invalid_lines[:5]:
-            print(f"  {C.DIM}Line {line_num}: \"{line[:30]}...\" ({reason}){C.RESET}")
-        if len(invalid_lines) > 5:
-            print(f"  {C.DIM}... and {len(invalid_lines) - 5} more{C.RESET}")
-        print()
+        if CYBER_UI_AVAILABLE:
+            console.print("[dim]Invalid lines:[/]")
+            for line_num, line, reason in invalid_lines[:5]:
+                console.print(f"  [dim]Line {line_num}: \"{line[:30]}...\" ({reason})[/]")
+            if len(invalid_lines) > 5:
+                console.print(f"  [dim]... and {len(invalid_lines) - 5} more[/]")
+            console.print()
+        else:
+            print(f"{C.DIM}Invalid lines:{C.RESET}")
+            for line_num, line, reason in invalid_lines[:5]:
+                print(f"  {C.DIM}Line {line_num}: \"{line[:30]}...\" ({reason}){C.RESET}")
+            if len(invalid_lines) > 5:
+                print(f"  {C.DIM}... and {len(invalid_lines) - 5} more{C.RESET}")
+            print()
 
     if not valid_domains:
-        print_error("No valid domains found in file.")
-        get_input("\nPress Enter to return to main menu...")
+        if CYBER_UI_AVAILABLE:
+            cyber_error("No valid domains found in file.")
+            cyber_prompt("Press Enter to return to main menu")
+        else:
+            print_error("No valid domains found in file.")
+            get_input("\nPress Enter to return to main menu...")
         return
 
-    print_success(f"Loaded {len(valid_domains)} domains")
+    if CYBER_UI_AVAILABLE:
+        cyber_success(f"Loaded {len(valid_domains)} domains")
+    else:
+        print_success(f"Loaded {len(valid_domains)} domains")
 
     # Offer to proceed to SpiderFoot scanning
-    if confirm("\nProceed to SpiderFoot scanning?"):
-        config = load_config()
-        config['pending_domains'] = list(valid_domains)
-        save_config(config)
-        print_success(f"Loaded {len(valid_domains)} domains into scan queue.")
-        print_info("Use option [3] Run SpiderFoot scans to start scanning.")
+    if CYBER_UI_AVAILABLE:
+        proceed = cyber_confirm("\nAdd to SpiderFoot scan queue?")
+    else:
+        proceed = confirm("\nAdd to SpiderFoot scan queue?")
 
-    get_input("\nPress Enter to return to main menu...")
+    if proceed:
+        config = load_config()
+        # MERGE with existing queue (don't replace!)
+        existing_pending = set(config.get('pending_domains', []))
+        combined = existing_pending | valid_domains
+        config['pending_domains'] = list(combined)
+        save_config(config)
+
+        added = len(combined) - len(existing_pending)
+        if CYBER_UI_AVAILABLE:
+            if existing_pending:
+                cyber_success(f"Added {added} new domains to scan queue.")
+                cyber_info(f"Total in queue: {len(combined)}")
+            else:
+                cyber_success(f"Loaded {len(valid_domains)} domains into scan queue.")
+            cyber_info("Use option [3] Run SpiderFoot scans to start scanning.")
+        else:
+            if existing_pending:
+                print_success(f"Added {added} new domains to scan queue.")
+                print_info(f"Total in queue: {len(combined)}")
+            else:
+                print_success(f"Loaded {len(valid_domains)} domains into scan queue.")
+            print_info("Use option [3] Run SpiderFoot scans to start scanning.")
+
+    if CYBER_UI_AVAILABLE:
+        cyber_prompt("Press Enter to return to main menu")
+    else:
+        get_input("\nPress Enter to return to main menu...")
+
+
+# =============================================================================
+# SPIDERFOOT CONTROL CENTER (UNIFIED)
+# =============================================================================
+
+def spiderfoot_control_center_menu():
+    """
+    Unified SpiderFoot Control Center menu.
+
+    Consolidates:
+    - CLI batch scanning
+    - Web GUI
+    - Database management
+    - Intensity presets
+    - ETA tracking
+    - Stuck scan detection
+    """
+    while True:  # Loop to allow returning to submenu
+        clear_screen()
+
+        # Use cyberpunk UI if available
+        if CYBER_UI_AVAILABLE:
+            console = get_console()
+            cyber_banner_spider()
+            cyber_header("SPIDERFOOT CONTROL CENTER")
+        else:
+            print_banner()
+            print_section("SpiderFoot Control Center", C.BRIGHT_CYAN)
+
+        # Import the control center module
+        try:
+            from discovery.spiderfoot_control import (
+                SpiderFootControlCenter, INTENSITY_PRESETS,
+                find_spiderfoot_db, get_db_size, count_db_scans,
+                reset_spiderfoot_db, kill_spiderfoot_processes,
+                is_in_tmux, estimate_total_time, should_warn_tmux
+            )
+            from discovery.jobs import JobTracker
+        except ImportError as e:
+            if CYBER_UI_AVAILABLE:
+                cyber_error(f"Failed to import control center: {e}")
+            else:
+                print_error(f"Failed to import control center: {e}")
+            get_input("\nPress Enter to return to main menu...")
+            return
+
+        # Load configuration
+        config = load_config()
+        sf_path = config.get('spiderfoot_path')
+        sf_python = config.get('spiderfoot_python')
+        sf_output = config.get('spiderfoot_output_dir', './spiderfoot_exports')
+
+        # Auto-detect SpiderFoot if not configured
+        if not sf_path or not os.path.exists(sf_path):
+            script_dir = Path(__file__).parent
+            project_sf_path = script_dir / "spiderfoot" / "sf.py"
+            project_sf_python = script_dir / "spiderfoot" / "venv" / "bin" / "python3"
+
+            if project_sf_path.exists() and project_sf_python.exists():
+                sf_path = str(project_sf_path)
+                sf_python = str(project_sf_python)
+                config['spiderfoot_path'] = sf_path
+                config['spiderfoot_python'] = sf_python
+                save_config(config)
+
+        # Get status information
+        sf_installed = sf_path and os.path.exists(sf_path)
+        db_path = find_spiderfoot_db(sf_path) if sf_installed else None
+        db_size = get_db_size(db_path) if db_path else "N/A"
+        db_scans = count_db_scans(db_path) if db_path else {}
+
+        # Get queue status
+        tracker = JobTracker()
+        queue_stats = tracker.get_stats()
+        pending_domains = config.get('pending_domains', [])
+
+        # Check if background scan is running
+        bg_running = is_background_scan_running()
+        bg_stats = get_background_scan_stats() if bg_running else None
+
+        # Display status panel
+        if CYBER_UI_AVAILABLE:
+            from rich.panel import Panel
+            from rich.table import Table
+            from rich.text import Text
+
+            # Status table
+            status_table = Table(show_header=False, box=None, padding=(0, 2))
+            status_table.add_column("Label", style="dim white", width=25)
+            status_table.add_column("Value")
+
+            # SpiderFoot status
+            if sf_installed:
+                status_table.add_row("◈ SpiderFoot", "[green]INSTALLED[/]")
+            else:
+                status_table.add_row("◈ SpiderFoot", "[red]NOT INSTALLED[/]")
+
+            # Database status
+            if db_path:
+                status_table.add_row("◈ Database", f"[cyan]{db_size}[/]")
+                status_table.add_row("  └─ Scans", f"[white]{db_scans.get('total', 0)} total[/] | "
+                                    f"[yellow]{db_scans.get('running', 0)} running[/] | "
+                                    f"[green]{db_scans.get('finished', 0)} finished[/]")
+            else:
+                status_table.add_row("◈ Database", "[dim]Not found[/]")
+
+            # Queue status
+            status_table.add_row("◈ Scan Queue",
+                f"[white]{queue_stats['total']} total[/] | "
+                f"[cyan]{queue_stats['pending']} pending[/] | "
+                f"[green]{queue_stats['completed']} done[/]")
+
+            # Pending domains (not yet in queue)
+            if pending_domains:
+                status_table.add_row("◈ Domains Loaded", f"[yellow]{len(pending_domains)} ready to add[/]")
+
+            # Background scan status
+            if bg_running:
+                progress = bg_stats['completed'] + bg_stats['failed']
+                status_table.add_row("◈ Active Scan", f"[bold yellow]RUNNING[/] - {progress}/{bg_stats['total']}")
+
+            # tmux status
+            status_table.add_row("◈ tmux", "[green]Active[/]" if is_in_tmux() else "[dim]Not in tmux[/]")
+
+            console.print(Panel(
+                status_table,
+                title="[bold magenta]⟨ SYSTEM STATUS ⟩[/]",
+                border_style="magenta",
+                padding=(1, 2)
+            ))
+            console.print()
+
+            # Menu options
+            menu_text = Text()
+
+            # Show install option prominently if not installed
+            if not sf_installed:
+                menu_text.append("SETUP REQUIRED\n", style="bold red underline")
+                menu_text.append("  [I] ", style="bold yellow")
+                menu_text.append("Install SpiderFoot      ", style="bold white")
+                menu_text.append("Auto-install SpiderFoot OSINT tool\n\n", style="yellow")
+
+            menu_text.append("SCAN OPERATIONS\n", style="bold white underline")
+            menu_text.append("  [1] ", style="bold green")
+            menu_text.append("Start Batch Scans       ", style="white")
+            menu_text.append("CLI mode with intensity presets\n", style="dim")
+            menu_text.append("  [2] ", style="bold cyan")
+            menu_text.append("View Scan Status        ", style="white")
+            menu_text.append("Progress, ETA, stuck detection\n", style="dim")
+            menu_text.append("  [3] ", style="bold yellow")
+            menu_text.append("Open Web GUI            ", style="white")
+            menu_text.append("Interactive browser interface\n\n", style="dim")
+
+            menu_text.append("DATABASE MANAGEMENT\n", style="bold white underline")
+            menu_text.append("  [4] ", style="bold red")
+            menu_text.append("Reset SpiderFoot DB     ", style="white")
+            menu_text.append("Wipe all scan data (creates backup)\n", style="dim")
+            menu_text.append("  [5] ", style="bold magenta")
+            menu_text.append("Kill SpiderFoot         ", style="white")
+            menu_text.append("Stop all running processes\n\n", style="dim")
+
+            menu_text.append("  [Q] ", style="bold white")
+            menu_text.append("Back to Main Menu\n", style="dim")
+
+            console.print(Panel(menu_text, title="[bold cyan]⟨ CONTROL CENTER ⟩[/]", border_style="cyan"))
+            console.print()
+        else:
+            # Classic terminal output
+            install_section = ""
+            if not sf_installed:
+                install_section = f"""
+{C.BRIGHT_RED}SETUP REQUIRED{C.RESET}
+{C.DIM}{'━' * 50}{C.RESET}
+  {C.BRIGHT_YELLOW}[I]{C.RESET} {C.WHITE}Install SpiderFoot{C.RESET}      Auto-install SpiderFoot OSINT tool
+"""
+            print(f"""
+{C.WHITE}SYSTEM STATUS{C.RESET}
+{C.DIM}{'━' * 50}{C.RESET}
+  SpiderFoot:     {C.GREEN + "[INSTALLED]" + C.RESET if sf_installed else C.RED + "[NOT INSTALLED]" + C.RESET}
+  Database:       {db_size} ({db_scans.get('total', 0)} scans, {db_scans.get('running', 0)} running)
+  Scan Queue:     {queue_stats['total']} total ({queue_stats['pending']} pending, {queue_stats['completed']} done)
+  Domains Loaded: {len(pending_domains)}
+  Background:     {"[RUNNING]" if bg_running else "[idle]"}
+  tmux:           {"[Active]" if is_in_tmux() else "[Not in tmux]"}
+{install_section}
+{C.WHITE}SCAN OPERATIONS{C.RESET}
+{C.DIM}{'━' * 50}{C.RESET}
+  {C.GREEN}[1]{C.RESET} Start Batch Scans       CLI mode with intensity presets
+  {C.CYAN}[2]{C.RESET} View Scan Status        Progress, ETA, stuck detection
+  {C.YELLOW}[3]{C.RESET} Open Web GUI            Interactive browser interface
+
+{C.WHITE}DATABASE MANAGEMENT{C.RESET}
+{C.DIM}{'━' * 50}{C.RESET}
+  {C.RED}[4]{C.RESET} Reset SpiderFoot DB     Wipe all scan data (creates backup)
+  {C.BRIGHT_MAGENTA}[5]{C.RESET} Kill SpiderFoot         Stop all running processes
+
+  {C.WHITE}[Q]{C.RESET} Back to Main Menu
+""")
+
+        choice = get_input("Select an option")
+        if choice is None:
+            choice = 'q'
+        choice = choice.lower().strip()
+
+        if choice == 'q':
+            return
+
+        elif choice == '1':
+            # Start batch scans with intensity presets
+            _spiderfoot_batch_scan_menu(config, sf_path, sf_python, sf_output)
+
+        elif choice == '2':
+            # View scan status
+            check_scan_status_menu()
+
+        elif choice == '3':
+            # Open Web GUI
+            launch_spiderfoot_gui()
+
+        elif choice == '4':
+            # Reset SpiderFoot database
+            _reset_spiderfoot_menu(sf_path)
+
+        elif choice == '5':
+            # Kill SpiderFoot processes
+            _kill_spiderfoot_menu()
+
+        elif choice == 'i':
+            # Install SpiderFoot
+            result = install_spiderfoot_interactive()
+            if result:
+                sf_path, sf_python = result
+                config['spiderfoot_path'] = sf_path
+                config['spiderfoot_python'] = sf_python
+                save_config(config)
+                if CYBER_UI_AVAILABLE:
+                    cyber_success("SpiderFoot installed successfully!")
+                else:
+                    print_success("SpiderFoot installed successfully!")
+            get_input("\nPress Enter to continue...")
+
+
+def _check_port_in_use(port: int) -> bool:
+    """Check if a port is in use"""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(('127.0.0.1', port)) == 0
+
+
+def _start_gui_server_background(sf_path: str, sf_python: str, port: int = 5001) -> bool:
+    """
+    Start SpiderFoot GUI server in background.
+
+    Returns:
+        True if server started or already running, False on failure
+    """
+    # Check if already running on this port
+    if _check_port_in_use(port):
+        return True  # Already running, that's fine
+
+    # Get SpiderFoot directory
+    sf_dir = Path(sf_path).parent
+
+    # Build command
+    python_exe = sf_python if sf_python and os.path.exists(sf_python) else "python3"
+
+    # Check if we're in tmux - if so, create a new window
+    if os.environ.get('TMUX'):
+        # Already in tmux, create a new window for the GUI
+        import shlex
+        sf_cmd = f"cd {shlex.quote(str(sf_dir))} && {shlex.quote(python_exe)} sf.py -l 127.0.0.1:{port}"
+        try:
+            subprocess.run([
+                'tmux', 'new-window', '-d', '-n', 'spiderfoot-gui', sf_cmd
+            ], check=True, capture_output=True)
+            return True
+        except Exception:
+            pass  # Fall through to direct subprocess
+
+    # Start as background subprocess
+    try:
+        subprocess.Popen(
+            [python_exe, sf_path, "-l", f"127.0.0.1:{port}"],
+            cwd=str(sf_dir),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True
+        )
+        # Give it a moment to start
+        time.sleep(1)
+        return True
+    except Exception:
+        return False
+
+
+def _open_or_show_gui_url(port: int = 5001):
+    """
+    Open browser to GUI URL, or show SSH tunnel instructions if remote.
+    """
+    # Check if remote (SSH connection)
+    ssh_connection = os.environ.get('SSH_CONNECTION', '')
+
+    if ssh_connection:
+        # Parse SSH_CONNECTION for IPs
+        parts = ssh_connection.split()
+        server_ip = parts[2] if len(parts) > 2 else 'THIS_SERVER'
+        username = os.environ.get('USER', 'user')
+
+        # Try to get EC2 public IP
+        public_ip = None
+        try:
+            result = subprocess.run(
+                ["curl", "-s", "--connect-timeout", "2",
+                 "http://169.254.169.254/latest/meta-data/public-ipv4"],
+                capture_output=True, text=True, timeout=3
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                public_ip = result.stdout.strip()
+        except Exception:
+            pass
+
+        remote_ip = public_ip or server_ip
+
+        if CYBER_UI_AVAILABLE:
+            console = get_console()
+            from rich.panel import Panel
+            console.print(Panel(
+                f"[bold]SSH Tunnel Required[/]\n\n"
+                f"Run this in a [cyan]NEW[/] terminal on your local machine:\n\n"
+                f"  [bold white]ssh -L {port}:localhost:{port} {username}@{remote_ip}[/]\n\n"
+                f"Then open: [bold white]http://localhost:{port}[/]",
+                title="[bold yellow]⟨ REMOTE ACCESS ⟩[/]",
+                border_style="yellow"
+            ))
+        else:
+            print(f"""
+{C.BRIGHT_YELLOW}SSH Tunnel Required{C.RESET}
+
+Run this in a {C.UNDERLINE}NEW{C.RESET} terminal on your local machine:
+
+  {C.BRIGHT_WHITE}ssh -L {port}:localhost:{port} {username}@{remote_ip}{C.RESET}
+
+Then open: {C.BRIGHT_WHITE}http://localhost:{port}{C.RESET}
+""")
+    else:
+        # Local - try to open browser
+        url = f"http://localhost:{port}"
+        try:
+            import webbrowser
+            webbrowser.open(url)
+            if CYBER_UI_AVAILABLE:
+                cyber_success(f"Opened browser to {url}")
+            else:
+                print_success(f"Opened browser to {url}")
+        except Exception:
+            if CYBER_UI_AVAILABLE:
+                cyber_info(f"Open in browser: {url}")
+            else:
+                print_info(f"Open in browser: {url}")
+
+
+def _spiderfoot_batch_scan_menu(config, sf_path, sf_python, sf_output):
+    """Sub-menu for starting batch scans with intensity presets"""
+    clear_screen()
+
+    try:
+        from discovery.spiderfoot_control import (
+            INTENSITY_PRESETS, estimate_total_time, should_warn_tmux, is_in_tmux
+        )
+        from discovery.jobs import JobTracker
+    except ImportError as e:
+        print_error(f"Import error: {e}")
+        get_input("\nPress Enter to return...")
+        return
+
+    if CYBER_UI_AVAILABLE:
+        console = get_console()
+        cyber_header("BATCH SCAN CONFIGURATION")
+    else:
+        print_section("Batch Scan Configuration", C.BRIGHT_GREEN)
+
+    # Check SpiderFoot installation
+    if not sf_path or not os.path.exists(sf_path):
+        if CYBER_UI_AVAILABLE:
+            cyber_error("SpiderFoot not installed!")
+            cyber_info("Use Help → Install SpiderFoot to set it up")
+        else:
+            print_error("SpiderFoot not installed!")
+            print_info("Use Help → Install SpiderFoot to set it up")
+        get_input("\nPress Enter to return...")
+        return
+
+    # Get queue info
+    tracker = JobTracker()
+    pending_domains = config.get('pending_domains', [])
+    existing_pending = len(tracker.get_pending())
+
+    total_domains = len(pending_domains) + existing_pending
+
+    if total_domains == 0:
+        if CYBER_UI_AVAILABLE:
+            cyber_warning("No domains in queue!")
+            cyber_info("Use [1] Scrape or [2] Load domains first")
+        else:
+            print_warning("No domains in queue!")
+            print_info("Use [1] Scrape or [2] Load domains first")
+        get_input("\nPress Enter to return...")
+        return
+
+    # Display intensity presets
+    if CYBER_UI_AVAILABLE:
+        from rich.panel import Panel
+        from rich.table import Table
+        from rich.text import Text
+
+        console.print(f"\n[bold white]Domains to scan:[/] [cyan]{total_domains}[/]\n")
+
+        preset_table = Table(show_header=True, header_style="bold white", box=None)
+        preset_table.add_column("Key", style="bold", width=5)
+        preset_table.add_column("Preset", width=12)
+        preset_table.add_column("Timeout", width=10)
+        preset_table.add_column("Parallel", width=10)
+        preset_table.add_column("Est. Time/Domain", width=15)
+        preset_table.add_column("Description")
+
+        for key, preset in INTENSITY_PRESETS.items():
+            timeout_str = f"{preset.timeout_seconds // 60}m" if preset.timeout_seconds < 3600 else f"{preset.timeout_seconds // 3600}h"
+            est_str = f"~{preset.estimated_time_per_domain // 60}m"
+            color = preset.color
+            preset_table.add_row(
+                f"[{color}]{key[0].upper()}[/]",
+                f"[{color}]{preset.name}[/]",
+                timeout_str,
+                str(preset.parallel_scans),
+                est_str,
+                preset.description[:40]
+            )
+
+        console.print(Panel(preset_table, title="[bold green]⟨ INTENSITY PRESETS ⟩[/]", border_style="green"))
+        console.print()
+    else:
+        print(f"\n{C.WHITE}Domains to scan: {C.CYAN}{total_domains}{C.RESET}\n")
+        print(f"{C.WHITE}INTENSITY PRESETS{C.RESET}")
+        print(f"{C.DIM}{'━' * 70}{C.RESET}")
+        for key, preset in INTENSITY_PRESETS.items():
+            timeout_str = f"{preset.timeout_seconds // 60}m" if preset.timeout_seconds < 3600 else f"{preset.timeout_seconds // 3600}h"
+            print(f"  [{key[0].upper()}] {preset.name:<12} | {timeout_str} timeout | {preset.parallel_scans} parallel | {preset.description[:35]}")
+        print()
+
+    # Select preset
+    preset_choice = get_input("Select intensity preset [S/M/C/X for custom]", "M")
+    if preset_choice is None:
+        return
+
+    preset_choice = preset_choice.lower().strip()
+    preset_map = {'s': 'safe', 'm': 'moderate', 'c': 'committed', 'x': 'custom'}
+    preset_key = preset_map.get(preset_choice, 'moderate')
+
+    if preset_key == 'custom':
+        # Custom configuration
+        timeout_input = get_input("Timeout per scan (minutes)", "60")
+        parallel_input = get_input("Parallel scans", "3")
+        try:
+            timeout_min = int(timeout_input) if timeout_input else 60
+            parallel = int(parallel_input) if parallel_input else 3
+            parallel = max(1, min(10, parallel))
+
+            from discovery.spiderfoot_control import IntensityPreset
+            preset = IntensityPreset(
+                name='Custom',
+                description=f'{timeout_min}m timeout, {parallel} parallel',
+                timeout_seconds=timeout_min * 60,
+                modules=None,
+                parallel_scans=parallel,
+                estimated_time_per_domain=timeout_min * 30,  # Rough estimate
+                color='magenta'
+            )
+        except ValueError:
+            print_warning("Invalid input, using Moderate preset")
+            preset = INTENSITY_PRESETS['moderate']
+    else:
+        preset = INTENSITY_PRESETS[preset_key]
+
+    # Calculate ETA
+    total_time = estimate_total_time(total_domains, preset)
+    hours = total_time.total_seconds() / 3600
+
+    # tmux warning
+    if should_warn_tmux(total_domains, preset):
+        if CYBER_UI_AVAILABLE:
+            from rich.panel import Panel
+            console.print(Panel(
+                f"[yellow]This scan batch is estimated to take {hours:.1f} hours.\n"
+                f"Consider running in tmux to prevent interruption on disconnect.\n"
+                f"Use option [9] from main menu to launch in tmux session.[/]",
+                title="[bold yellow]⚠ LONG SCAN WARNING[/]",
+                border_style="yellow"
+            ))
+        else:
+            print(f"""
+{C.YELLOW}{'━' * 60}
+  WARNING: This scan batch is estimated to take {hours:.1f} hours.
+  Consider running in tmux to prevent interruption on disconnect.
+  Use option [9] from main menu to launch in tmux session.
+{'━' * 60}{C.RESET}
+""")
+
+    # Confirmation
+    if CYBER_UI_AVAILABLE:
+        from rich.panel import Panel
+        console.print(Panel(
+            f"[bold]Preset:[/] {preset.name}\n"
+            f"[bold]Domains:[/] {total_domains}\n"
+            f"[bold]Timeout:[/] {preset.timeout_seconds // 60} minutes per scan\n"
+            f"[bold]Parallel:[/] {preset.parallel_scans} simultaneous scans\n"
+            f"[bold]Est. Total:[/] ~{hours:.1f} hours",
+            title="[bold green]⟨ SCAN SUMMARY ⟩[/]",
+            border_style="green"
+        ))
+        console.print()
+        do_scan = cyber_confirm("Start scanning?")
+    else:
+        print(f"""
+{C.GREEN}{'━' * 50}{C.RESET}
+  Preset:     {preset.name}
+  Domains:    {total_domains}
+  Timeout:    {preset.timeout_seconds // 60} minutes per scan
+  Parallel:   {preset.parallel_scans} simultaneous scans
+  Est. Total: ~{hours:.1f} hours
+{C.GREEN}{'━' * 50}{C.RESET}
+""")
+        do_scan = confirm("Start scanning?")
+
+    if not do_scan:
+        print_info("Cancelled.")
+        get_input("\nPress Enter to return...")
+        return
+
+    # Ask about GUI monitoring
+    if CYBER_UI_AVAILABLE:
+        open_gui = cyber_confirm("Monitor scans in browser?")
+    else:
+        open_gui = confirm("Monitor scans in browser?")
+
+    if open_gui:
+        # Start GUI server in background
+        if _start_gui_server_background(sf_path, sf_python, port=5001):
+            if CYBER_UI_AVAILABLE:
+                cyber_success("SpiderFoot GUI started on port 5001")
+            else:
+                print_success("SpiderFoot GUI started on port 5001")
+            # Open browser or show SSH tunnel instructions
+            _open_or_show_gui_url(port=5001)
+        else:
+            if CYBER_UI_AVAILABLE:
+                cyber_warning("Could not start GUI server")
+            else:
+                print_warning("Could not start GUI server")
+
+    # Add pending domains to tracker
+    if pending_domains:
+        added = tracker.add_domains(pending_domains)
+        config['pending_domains'] = []
+        save_config(config)
+        if CYBER_UI_AVAILABLE:
+            cyber_success(f"Added {added} domains to scan queue")
+        else:
+            print_success(f"Added {added} domains to scan queue")
+
+    # Create output directory
+    if not os.path.exists(sf_output):
+        os.makedirs(sf_output, exist_ok=True)
+
+    # Import scanner
+    from discovery.scanner import SpiderFootScanner
+
+    scanner = SpiderFootScanner(
+        spiderfoot_path=sf_path,
+        output_dir=sf_output,
+        max_parallel=preset.parallel_scans,
+        job_tracker=tracker,
+        spiderfoot_python=sf_python,
+        timeout_seconds=preset.timeout_seconds,
+        modules=preset.modules
+    )
+
+    # Ask for run mode
+    if CYBER_UI_AVAILABLE:
+        console.print("\n[bold white]Run Mode:[/]")
+        console.print("  [1] Background (return to menu)")
+        console.print("  [2] Foreground (watch progress)")
+        console.print()
+    else:
+        print(f"""
+{C.WHITE}Run Mode:{C.RESET}
+  [1] Background (return to menu)
+  [2] Foreground (watch progress)
+""")
+
+    run_mode = get_input("Select run mode", "1")
+    if run_mode is None:
+        return
+
+    total_pending = len(tracker.get_pending())
+
+    if run_mode == "1":
+        # Run in background
+        global _background_scan_thread
+        _update_background_stats(
+            running=True,
+            completed=0,
+            failed=0,
+            total=total_pending,
+            current_domain=None,
+            start_time=datetime.now().isoformat()
+        )
+
+        _background_scan_thread = threading.Thread(
+            target=_run_background_scans,
+            args=(scanner, tracker),
+            daemon=True
+        )
+        _background_scan_thread.start()
+
+        if CYBER_UI_AVAILABLE:
+            cyber_success("Scans started in background!")
+            cyber_info("Use [2] View Scan Status to check progress")
+        else:
+            print_success("Scans started in background!")
+            print_info("Use [2] View Scan Status to check progress")
+        time.sleep(1.5)
+        return
+    else:
+        # Run in foreground
+        if CYBER_UI_AVAILABLE:
+            cyber_header("RUNNING SCANS")
+            console.print("[dim]Press Ctrl+C to pause. Progress auto-saves.[/]\n")
+
+            def on_start(domain):
+                console.print(f"  [cyan]▶[/] Starting: [bold]{domain}[/]")
+
+            def on_complete(domain, csv_path):
+                console.print(f"  [green]✓[/] Completed: [bold green]{domain}[/]")
+
+            def on_failed(domain, error):
+                console.print(f"  [red]✗[/] Failed: [bold]{domain}[/] - [dim]{error[:50]}[/]")
+
+            def on_progress(completed, failed, total):
+                console.print(f"\n  [bold cyan]Progress: {completed + failed}/{total}[/]\n")
+        else:
+            print_section("Running Scans", C.BRIGHT_MAGENTA)
+            print(f"{C.DIM}Press Ctrl+C to pause. Progress auto-saves.{C.RESET}\n")
+
+            def on_start(domain):
+                print(f"  {C.CYAN}▶{C.RESET} Starting: {domain}")
+
+            def on_complete(domain, csv_path):
+                print(f"  {C.GREEN}✓{C.RESET} Completed: {domain}")
+
+            def on_failed(domain, error):
+                print(f"  {C.RED}✗{C.RESET} Failed: {domain} - {error[:50]}")
+
+            def on_progress(completed, failed, total):
+                print(f"\n  {C.CYAN}Progress: {completed + failed}/{total}{C.RESET}\n")
+
+        scanner.on_scan_start = on_start
+        scanner.on_scan_complete = on_complete
+        scanner.on_scan_failed = on_failed
+        scanner.on_progress = on_progress
+
+        try:
+            results = scanner.process_queue(progress_callback=on_progress)
+            if CYBER_UI_AVAILABLE:
+                cyber_success(f"Batch complete! {results['completed']} succeeded, {results['failed']} failed")
+            else:
+                print_success(f"Batch complete! {results['completed']} succeeded, {results['failed']} failed")
+        except KeyboardInterrupt:
+            scanner.stop()
+            if CYBER_UI_AVAILABLE:
+                cyber_warning("Scan paused. Progress saved.")
+            else:
+                print_warning("Scan paused. Progress saved.")
+        except Exception as e:
+            if CYBER_UI_AVAILABLE:
+                cyber_error(f"Error: {e}")
+            else:
+                print_error(f"Error: {e}")
+
+        get_input("\nPress Enter to return...")
+
+
+def _reset_spiderfoot_menu(sf_path):
+    """Sub-menu for resetting SpiderFoot database"""
+    clear_screen()
+
+    try:
+        from discovery.spiderfoot_control import (
+            find_spiderfoot_db, get_db_size, count_db_scans,
+            reset_spiderfoot_db, kill_spiderfoot_processes
+        )
+    except ImportError as e:
+        print_error(f"Import error: {e}")
+        get_input("\nPress Enter to return...")
+        return
+
+    if CYBER_UI_AVAILABLE:
+        console = get_console()
+        cyber_header("RESET SPIDERFOOT DATABASE")
+    else:
+        print_section("Reset SpiderFoot Database", C.BRIGHT_RED)
+
+    if not sf_path or not os.path.exists(sf_path):
+        if CYBER_UI_AVAILABLE:
+            cyber_error("SpiderFoot not found!")
+        else:
+            print_error("SpiderFoot not found!")
+        get_input("\nPress Enter to return...")
+        return
+
+    # Find database
+    db_path = find_spiderfoot_db(sf_path)
+    if not db_path:
+        if CYBER_UI_AVAILABLE:
+            cyber_warning("SpiderFoot database not found. Nothing to reset.")
+        else:
+            print_warning("SpiderFoot database not found. Nothing to reset.")
+        get_input("\nPress Enter to return...")
+        return
+
+    # Show current status
+    db_size = get_db_size(db_path)
+    db_scans = count_db_scans(db_path)
+
+    if CYBER_UI_AVAILABLE:
+        from rich.panel import Panel
+        console.print(Panel(
+            f"[bold]Database:[/] {db_path}\n"
+            f"[bold]Size:[/] {db_size}\n"
+            f"[bold]Total Scans:[/] {db_scans.get('total', 0)}\n"
+            f"  └─ Running: {db_scans.get('running', 0)}\n"
+            f"  └─ Finished: {db_scans.get('finished', 0)}\n"
+            f"  └─ Aborted: {db_scans.get('aborted', 0)}",
+            title="[bold red]⟨ DATABASE STATUS ⟩[/]",
+            border_style="red"
+        ))
+        console.print()
+        console.print("[yellow]WARNING: This will delete ALL SpiderFoot scan data![/]")
+        console.print("[dim]A backup will be created before deletion.[/]\n")
+        do_reset = cyber_confirm("Reset SpiderFoot database?")
+    else:
+        print(f"""
+{C.RED}{'━' * 50}{C.RESET}
+  Database:     {db_path}
+  Size:         {db_size}
+  Total Scans:  {db_scans.get('total', 0)}
+    └─ Running:   {db_scans.get('running', 0)}
+    └─ Finished:  {db_scans.get('finished', 0)}
+    └─ Aborted:   {db_scans.get('aborted', 0)}
+{C.RED}{'━' * 50}{C.RESET}
+
+{C.YELLOW}WARNING: This will delete ALL SpiderFoot scan data!{C.RESET}
+{C.DIM}A backup will be created before deletion.{C.RESET}
+""")
+        do_reset = confirm("Reset SpiderFoot database?")
+
+    if not do_reset:
+        print_info("Cancelled.")
+        get_input("\nPress Enter to return...")
+        return
+
+    # Kill any running processes first
+    if CYBER_UI_AVAILABLE:
+        cyber_info("Stopping SpiderFoot processes...")
+    else:
+        print_info("Stopping SpiderFoot processes...")
+
+    killed = kill_spiderfoot_processes()
+    if killed > 0:
+        if CYBER_UI_AVAILABLE:
+            cyber_success(f"Killed {killed} SpiderFoot process(es)")
+        else:
+            print_success(f"Killed {killed} SpiderFoot process(es)")
+        time.sleep(1)
+
+    # Reset database
+    success, msg = reset_spiderfoot_db(sf_path, backup=True)
+
+    if success:
+        if CYBER_UI_AVAILABLE:
+            cyber_success(msg)
+        else:
+            print_success(msg)
+    else:
+        if CYBER_UI_AVAILABLE:
+            cyber_error(msg)
+        else:
+            print_error(msg)
+
+    get_input("\nPress Enter to return...")
+
+
+def _kill_spiderfoot_menu():
+    """Sub-menu for killing SpiderFoot processes"""
+    clear_screen()
+
+    try:
+        from discovery.spiderfoot_control import kill_spiderfoot_processes
+    except ImportError as e:
+        print_error(f"Import error: {e}")
+        get_input("\nPress Enter to return...")
+        return
+
+    if CYBER_UI_AVAILABLE:
+        console = get_console()
+        cyber_header("KILL SPIDERFOOT PROCESSES")
+    else:
+        print_section("Kill SpiderFoot Processes", C.BRIGHT_RED)
+
+    # Find running processes
+    try:
+        result = subprocess.run(
+            ["pgrep", "-af", "sf.py"],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            processes = result.stdout.strip().split('\n')
+            if CYBER_UI_AVAILABLE:
+                console.print(f"[yellow]Found {len(processes)} SpiderFoot process(es):[/]\n")
+                for proc in processes:
+                    console.print(f"  [dim]{proc}[/]")
+                console.print()
+            else:
+                print(f"\n{C.YELLOW}Found {len(processes)} SpiderFoot process(es):{C.RESET}\n")
+                for proc in processes:
+                    print(f"  {C.DIM}{proc}{C.RESET}")
+                print()
+        else:
+            if CYBER_UI_AVAILABLE:
+                cyber_info("No SpiderFoot processes found running.")
+            else:
+                print_info("No SpiderFoot processes found running.")
+            get_input("\nPress Enter to return...")
+            return
+    except Exception as e:
+        if CYBER_UI_AVAILABLE:
+            cyber_error(f"Could not check processes: {e}")
+        else:
+            print_error(f"Could not check processes: {e}")
+        get_input("\nPress Enter to return...")
+        return
+
+    # Confirm
+    do_kill = cyber_confirm("Kill all SpiderFoot processes?") if CYBER_UI_AVAILABLE else confirm("Kill all SpiderFoot processes?")
+
+    if not do_kill:
+        print_info("Cancelled.")
+        get_input("\nPress Enter to return...")
+        return
+
+    killed = kill_spiderfoot_processes()
+
+    if CYBER_UI_AVAILABLE:
+        cyber_success(f"Killed {killed} process(es)")
+    else:
+        print_success(f"Killed {killed} process(es)")
+
+    get_input("\nPress Enter to return...")
 
 
 def run_spiderfoot_scans_menu():
     """Menu for running SpiderFoot scans"""
     clear_screen()
-    print_banner()
-    print_section("Run SpiderFoot Scans", C.BRIGHT_CYAN)
+
+    # Use cyberpunk UI if available
+    if CYBER_UI_AVAILABLE:
+        console = get_console()
+        cyber_banner_spider()
+        cyber_header("SPIDERFOOT SCAN CONTROLLER")
+    else:
+        print_banner()
+        print_section("Run SpiderFoot Scans", C.BRIGHT_CYAN)
 
     # Check if background scan is already running
     if is_background_scan_running():
         bg_stats = get_background_scan_stats()
         progress = bg_stats['completed'] + bg_stats['failed']
-        print(f"""
+
+        if CYBER_UI_AVAILABLE:
+            from rich.panel import Panel
+            from rich.text import Text
+            progress_text = Text()
+            progress_text.append("⚡ BACKGROUND SCAN IN PROGRESS\n\n", style="bold yellow")
+            progress_text.append(f"   Progress: ", style="white")
+            progress_text.append(f"{progress}/{bg_stats['total']}", style="bold cyan")
+            progress_text.append(f" scans\n", style="white")
+            progress_text.append(f"   Completed: ", style="white")
+            progress_text.append(f"{bg_stats['completed']}", style="bold green")
+            progress_text.append(f"   Failed: ", style="white")
+            progress_text.append(f"{bg_stats['failed']}", style="bold red")
+            console.print(Panel(progress_text, border_style="yellow", title="[bold yellow]⟐ ACTIVE SCAN ⟐[/]"))
+            console.print()
+            cyber_info("Use option [4] to view detailed progress")
+            cyber_info("Wait for current scans to complete before starting new ones")
+        else:
+            print(f"""
 {C.BRIGHT_YELLOW}╔═══════════════════════════════════════════════════════════════════════════════╗
 ║  🔄 BACKGROUND SCAN ALREADY IN PROGRESS                                        ║
 ╠═══════════════════════════════════════════════════════════════════════════════╣
 ║   Progress: {progress}/{bg_stats['total']} scans ({bg_stats['completed']} completed, {bg_stats['failed']} failed){' ' * 25}║
 ╚═══════════════════════════════════════════════════════════════════════════════╝{C.RESET}
 """)
-        print_info("Use option [4] to view detailed progress.")
-        print_info("Wait for current scans to complete before starting new ones.")
+            print_info("Use option [4] to view detailed progress.")
+            print_info("Wait for current scans to complete before starting new ones.")
         get_input("\nPress Enter to return to main menu...")
         return
 
@@ -2913,7 +4731,10 @@ def run_spiderfoot_scans_menu():
         from discovery.scanner import SpiderFootScanner, get_install_guide
         from discovery.jobs import JobTracker
     except ImportError as e:
-        print_error(f"Discovery module not available: {e}")
+        if CYBER_UI_AVAILABLE:
+            cyber_error(f"Discovery module not available: {e}")
+        else:
+            print_error(f"Discovery module not available: {e}")
         get_input("\nPress Enter to return to main menu...")
         return
 
@@ -2926,7 +4747,28 @@ def run_spiderfoot_scans_menu():
     existing_pending = len(tracker.get_pending())
     existing_running = len(tracker.get_running())
 
-    print(f"""
+    if CYBER_UI_AVAILABLE:
+        from rich.panel import Panel
+        from rich.text import Text
+        from rich.table import Table
+
+        # Create spider web style queue display
+        queue_table = Table(show_header=False, box=None, padding=(0, 2))
+        queue_table.add_column("Label", style="dim white")
+        queue_table.add_column("Value", style="bold")
+        queue_table.add_row("◈ Domains loaded (new)", f"[cyan]{len(pending_domains)}[/]")
+        queue_table.add_row("◈ Existing pending scans", f"[cyan]{existing_pending}[/]")
+        queue_table.add_row("◈ Currently running", f"[yellow]{existing_running}[/]")
+
+        console.print(Panel(
+            queue_table,
+            title="[bold magenta]⟨ SCAN QUEUE ⟩[/]",
+            border_style="magenta",
+            padding=(1, 2)
+        ))
+        console.print()
+    else:
+        print(f"""
 {C.WHITE}SpiderFoot Batch Scanner{C.RESET}
 {C.DIM}━━━━━━━━━━━━━━━━━━━━━━━━{C.RESET}
 
@@ -2938,20 +4780,37 @@ def run_spiderfoot_scans_menu():
 
     # Check if SpiderFoot is configured
     sf_path = config.get('spiderfoot_path')
-    if sf_path and os.path.exists(sf_path):
-        print(f"  • SpiderFoot path:          {C.GREEN}{sf_path}{C.RESET}")
-    else:
-        print(f"  • SpiderFoot path:          {C.RED}Not configured{C.RESET}")
-        sf_path = None
-
-    # Check output directory
     sf_output = config.get('spiderfoot_output_dir', './spiderfoot_exports')
-    print(f"  • Output directory:         {C.CYAN}{sf_output}{C.RESET}")
-    print()
+
+    if CYBER_UI_AVAILABLE:
+        # Display configuration status
+        config_table = Table(show_header=False, box=None, padding=(0, 2))
+        config_table.add_column("Label", style="dim white")
+        config_table.add_column("Value")
+        if sf_path and os.path.exists(sf_path):
+            config_table.add_row("◈ SpiderFoot path", f"[green]{sf_path}[/]")
+        else:
+            config_table.add_row("◈ SpiderFoot path", "[red]Not configured[/]")
+            sf_path = None
+        config_table.add_row("◈ Output directory", f"[cyan]{sf_output}[/]")
+        console.print(config_table)
+        console.print()
+    else:
+        if sf_path and os.path.exists(sf_path):
+            print(f"  • SpiderFoot path:          {C.GREEN}{sf_path}{C.RESET}")
+        else:
+            print(f"  • SpiderFoot path:          {C.RED}Not configured{C.RESET}")
+            sf_path = None
+        print(f"  • Output directory:         {C.CYAN}{sf_output}{C.RESET}")
+        print()
 
     if not pending_domains and existing_pending == 0:
-        print_warning("No domains in queue.")
-        print_info("Use option [1] or [2] to add domains first.")
+        if CYBER_UI_AVAILABLE:
+            cyber_warning("No domains in queue")
+            cyber_info("Use option [1] or [2] to add domains first")
+        else:
+            print_warning("No domains in queue.")
+            print_info("Use option [1] or [2] to add domains first.")
         get_input("\nPress Enter to return to main menu...")
         return
 
@@ -2959,7 +4818,10 @@ def run_spiderfoot_scans_menu():
     sf_python = config.get('spiderfoot_python')  # The venv python for SpiderFoot
 
     if not sf_path or not sf_python:
-        print(f"\n{C.YELLOW}SpiderFoot not configured.{C.RESET}")
+        if CYBER_UI_AVAILABLE:
+            cyber_warning("SpiderFoot not configured")
+        else:
+            print(f"\n{C.YELLOW}SpiderFoot not configured.{C.RESET}")
 
         # Check if we have SpiderFoot installed in project directory
         script_dir = Path(__file__).parent
@@ -2967,7 +4829,10 @@ def run_spiderfoot_scans_menu():
         project_sf_python = script_dir / "spiderfoot" / "venv" / "bin" / "python3"
 
         if project_sf_path.exists() and project_sf_python.exists():
-            print_success(f"Found SpiderFoot in project directory!")
+            if CYBER_UI_AVAILABLE:
+                cyber_success("Found SpiderFoot in project directory!")
+            else:
+                print_success(f"Found SpiderFoot in project directory!")
             sf_path = str(project_sf_path)
             sf_python = str(project_sf_python)
             config['spiderfoot_path'] = sf_path
@@ -2975,7 +4840,20 @@ def run_spiderfoot_scans_menu():
             save_config(config)
         else:
             # Offer to install
-            print(f"""
+            if CYBER_UI_AVAILABLE:
+                from rich.panel import Panel
+                install_text = Text()
+                install_text.append("SpiderFoot is required to scan domains.\n\n", style="white")
+                install_text.append("Source:   ", style="dim")
+                install_text.append("https://github.com/smicallef/spiderfoot\n", style="cyan")
+                install_text.append("Install:  ", style="dim")
+                install_text.append("Clone repo → Create venv → Install dependencies\n", style="white")
+                install_text.append("Location: ", style="dim")
+                install_text.append("./spiderfoot/ (in this project directory)", style="white")
+                console.print(Panel(install_text, title="[bold red]⚠ SPIDERFOOT NOT INSTALLED[/]", border_style="red"))
+                console.print()
+            else:
+                print(f"""
 {C.WHITE}SpiderFoot is not installed.{C.RESET}
 
 SpiderFoot is required to scan domains. Would you like to install it now?
@@ -2984,7 +4862,8 @@ SpiderFoot is required to scan domains. Would you like to install it now?
 {C.DIM}Install:{C.RESET} Clone repo → Create venv → Install dependencies
 {C.DIM}Location:{C.RESET} ./spiderfoot/ (in this project directory)
 """)
-            if confirm("Install SpiderFoot now?"):
+            do_install = cyber_confirm("Install SpiderFoot now?") if CYBER_UI_AVAILABLE else confirm("Install SpiderFoot now?")
+            if do_install:
                 result = install_spiderfoot_interactive()
                 if result:
                     # Reload config after install
@@ -2992,21 +4871,34 @@ SpiderFoot is required to scan domains. Would you like to install it now?
                     sf_path = config.get('spiderfoot_path')
                     sf_python = config.get('spiderfoot_python')
                     if not sf_path or not sf_python:
-                        print_error("Installation completed but configuration not saved properly.")
+                        if CYBER_UI_AVAILABLE:
+                            cyber_error("Installation completed but configuration not saved properly")
+                        else:
+                            print_error("Installation completed but configuration not saved properly.")
                         get_input("\nPress Enter to return to main menu...")
                         return
                 else:
-                    print_error("SpiderFoot installation failed or was cancelled.")
+                    if CYBER_UI_AVAILABLE:
+                        cyber_error("SpiderFoot installation failed or was cancelled")
+                    else:
+                        print_error("SpiderFoot installation failed or was cancelled.")
                     get_input("\nPress Enter to return to main menu...")
                     return
             else:
-                print_info("SpiderFoot is required to run scans.")
-                print_info("You can install it anytime via Help [8] → Install SpiderFoot")
+                if CYBER_UI_AVAILABLE:
+                    cyber_info("SpiderFoot is required to run scans")
+                    cyber_info("You can install it anytime via Help [8] → Install SpiderFoot")
+                else:
+                    print_info("SpiderFoot is required to run scans.")
+                    print_info("You can install it anytime via Help [8] → Install SpiderFoot")
                 get_input("\nPress Enter to return to main menu...")
                 return
 
     # Verify SpiderFoot works with its venv python
-    print_info("Verifying SpiderFoot installation...")
+    if CYBER_UI_AVAILABLE:
+        cyber_info("Verifying SpiderFoot installation...")
+    else:
+        print_info("Verifying SpiderFoot installation...")
     try:
         result = subprocess.run(
             [sf_python, sf_path, "--help"],
@@ -3015,11 +4907,20 @@ SpiderFoot is required to scan domains. Would you like to install it now?
             timeout=30
         )
         if result.returncode == 0:
-            print_success("SpiderFoot is ready!")
+            if CYBER_UI_AVAILABLE:
+                cyber_success("SpiderFoot is ready!")
+            else:
+                print_success("SpiderFoot is ready!")
         else:
-            print_error("SpiderFoot verification failed:")
-            print(f"{C.DIM}{result.stderr[:200]}{C.RESET}")
-            if confirm("Would you like to reinstall SpiderFoot?"):
+            if CYBER_UI_AVAILABLE:
+                cyber_error("SpiderFoot verification failed")
+                console.print(f"[dim]{result.stderr[:200]}[/]")
+                do_reinstall = cyber_confirm("Would you like to reinstall SpiderFoot?")
+            else:
+                print_error("SpiderFoot verification failed:")
+                print(f"{C.DIM}{result.stderr[:200]}{C.RESET}")
+                do_reinstall = confirm("Would you like to reinstall SpiderFoot?")
+            if do_reinstall:
                 install_spiderfoot_interactive()
                 config = load_config()
                 sf_path = config.get('spiderfoot_path')
@@ -3028,8 +4929,13 @@ SpiderFoot is required to scan domains. Would you like to install it now?
                 get_input("\nPress Enter to return to main menu...")
                 return
     except Exception as e:
-        print_error(f"SpiderFoot verification failed: {e}")
-        if confirm("Would you like to reinstall SpiderFoot?"):
+        if CYBER_UI_AVAILABLE:
+            cyber_error(f"SpiderFoot verification failed: {e}")
+            do_reinstall = cyber_confirm("Would you like to reinstall SpiderFoot?")
+        else:
+            print_error(f"SpiderFoot verification failed: {e}")
+            do_reinstall = confirm("Would you like to reinstall SpiderFoot?")
+        if do_reinstall:
             install_spiderfoot_interactive()
             config = load_config()
             sf_path = config.get('spiderfoot_path')
@@ -3039,19 +4945,30 @@ SpiderFoot is required to scan domains. Would you like to install it now?
             return
 
     # Configure output directory
-    print(f"\n{C.WHITE}Where should SpiderFoot save CSV exports?{C.RESET}")
+    if CYBER_UI_AVAILABLE:
+        console.print()
+        console.print("[bold white]Where should SpiderFoot save CSV exports?[/]")
+    else:
+        print(f"\n{C.WHITE}Where should SpiderFoot save CSV exports?{C.RESET}")
     sf_output = get_input("Output directory", sf_output)
     if sf_output is None:
-        print_info("Cancelled.")
+        if CYBER_UI_AVAILABLE:
+            cyber_info("Cancelled")
+        else:
+            print_info("Cancelled.")
         get_input("\nPress Enter to return to main menu...")
         return
 
     sf_output = os.path.expanduser(sf_output)
     if not os.path.exists(sf_output):
-        if confirm(f"Create directory {sf_output}?"):
-            os.makedirs(sf_output)
+        do_create = cyber_confirm(f"Create directory {sf_output}?") if CYBER_UI_AVAILABLE else confirm(f"Create directory {sf_output}?")
+        if do_create:
+            os.makedirs(sf_output, exist_ok=True)
         else:
-            print_info("Cancelled.")
+            if CYBER_UI_AVAILABLE:
+                cyber_info("Cancelled")
+            else:
+                print_info("Cancelled.")
             get_input("\nPress Enter to return to main menu...")
             return
 
@@ -3061,7 +4978,10 @@ SpiderFoot is required to scan domains. Would you like to install it now?
     # Add new domains to tracker
     if pending_domains:
         added = tracker.add_domains(pending_domains)
-        print_success(f"Added {added} new domains to scan queue")
+        if CYBER_UI_AVAILABLE:
+            cyber_success(f"Added {added} new domains to scan queue")
+        else:
+            print_success(f"Added {added} new domains to scan queue")
         # Clear pending domains from config
         config['pending_domains'] = []
         save_config(config)
@@ -3069,7 +4989,10 @@ SpiderFoot is required to scan domains. Would you like to install it now?
     # Configure parallelism
     max_parallel = get_input("Max parallel scans", "3")
     if max_parallel is None:
-        print_info("Cancelled.")
+        if CYBER_UI_AVAILABLE:
+            cyber_info("Cancelled")
+        else:
+            print_info("Cancelled.")
         get_input("\nPress Enter to return to main menu...")
         return
     try:
@@ -3080,7 +5003,34 @@ SpiderFoot is required to scan domains. Would you like to install it now?
 
     # Confirm and start
     total_pending = len(tracker.get_pending())
-    print(f"""
+
+    if CYBER_UI_AVAILABLE:
+        from rich.panel import Panel
+        from rich.text import Text
+
+        # Spider web style scan summary
+        scan_text = Text()
+        scan_text.append("◈ Domains to scan:   ", style="dim white")
+        scan_text.append(f"{total_pending}\n", style="bold cyan")
+        scan_text.append("◈ Parallel scans:    ", style="dim white")
+        scan_text.append(f"{max_parallel}\n", style="bold yellow")
+        scan_text.append("◈ Output directory:  ", style="dim white")
+        scan_text.append(f"{sf_output}\n", style="cyan")
+        scan_text.append("◈ SpiderFoot path:   ", style="dim white")
+        scan_text.append(f"{sf_path}\n\n", style="dim")
+        scan_text.append("Note: Each scan may take 5-30 minutes", style="dim italic")
+
+        console.print(Panel(scan_text, title="[bold green]⟨ READY TO SCAN ⟩[/]", border_style="green"))
+        console.print()
+
+        # Run mode menu
+        console.print("[bold white]How would you like to run scans?[/]\n")
+        console.print("  [bold green][1][/] Run in background (return to menu, check progress with [4])")
+        console.print("  [bold yellow][2][/] Run in foreground (watch progress live)")
+        console.print("  [bold red][3][/] Cancel")
+        console.print()
+    else:
+        print(f"""
 {C.BRIGHT_GREEN}{'━' * 60}{C.RESET}
 {C.WHITE}Ready to scan:{C.RESET}
 
@@ -3101,7 +5051,10 @@ SpiderFoot is required to scan domains. Would you like to install it now?
 
     choice = get_input("Choice", "1")
     if choice is None or choice == "3":
-        print_info("Cancelled. Domains remain in queue for later.")
+        if CYBER_UI_AVAILABLE:
+            cyber_info("Cancelled. Domains remain in queue for later")
+        else:
+            print_info("Cancelled. Domains remain in queue for later.")
         get_input("\nPress Enter to return to main menu...")
         return
 
@@ -3133,28 +5086,50 @@ SpiderFoot is required to scan domains. Would you like to install it now?
         )
         _background_scan_thread.start()
 
-        print_success("Scans started in background!")
-        print_info("Returning to main menu. Use option [4] to check progress.")
+        if CYBER_UI_AVAILABLE:
+            cyber_success("Scans started in background!")
+            cyber_info("Returning to main menu. Use option [4] to check progress")
+        else:
+            print_success("Scans started in background!")
+            print_info("Returning to main menu. Use option [4] to check progress.")
         time.sleep(1.5)
         return
 
     # Run in foreground (choice == "2")
-    print_section("Running SpiderFoot Scans", C.BRIGHT_MAGENTA)
-    print(f"{C.DIM}Press Ctrl+C to pause and return to menu. Progress auto-saves.{C.RESET}\n")
+    if CYBER_UI_AVAILABLE:
+        cyber_header("RUNNING SPIDERFOOT SCANS")
+        console.print("[dim]Press Ctrl+C to pause and return to menu. Progress auto-saves.[/]\n")
+    else:
+        print_section("Running SpiderFoot Scans", C.BRIGHT_MAGENTA)
+        print(f"{C.DIM}Press Ctrl+C to pause and return to menu. Progress auto-saves.{C.RESET}\n")
 
     try:
-        def on_start(domain):
-            print(f"  {C.CYAN}▶{C.RESET} Starting scan: {domain}")
+        if CYBER_UI_AVAILABLE:
+            def on_start(domain):
+                console.print(f"  [cyan]▶[/] Starting scan: [bold]{domain}[/]")
 
-        def on_complete(domain, csv_path):
-            print(f"  {C.GREEN}✓{C.RESET} Completed: {domain}")
+            def on_complete(domain, csv_path):
+                console.print(f"  [green]✓[/] Completed: [bold green]{domain}[/]")
 
-        def on_failed(domain, error):
-            print(f"  {C.RED}✗{C.RESET} Failed: {domain} - {error[:50]}")
+            def on_failed(domain, error):
+                console.print(f"  [red]✗[/] Failed: [bold]{domain}[/] - [dim]{error[:50]}[/]")
 
-        def on_progress(completed, failed, total):
-            print(f"\n  {C.BRIGHT_CYAN}Progress: {completed + failed}/{total} "
-                  f"({completed} completed, {failed} failed){C.RESET}\n")
+            def on_progress(completed, failed, total):
+                console.print(f"\n  [bold cyan]Progress: {completed + failed}/{total} "
+                      f"({completed} completed, {failed} failed)[/]\n")
+        else:
+            def on_start(domain):
+                print(f"  {C.CYAN}▶{C.RESET} Starting scan: {domain}")
+
+            def on_complete(domain, csv_path):
+                print(f"  {C.GREEN}✓{C.RESET} Completed: {domain}")
+
+            def on_failed(domain, error):
+                print(f"  {C.RED}✗{C.RESET} Failed: {domain} - {error[:50]}")
+
+            def on_progress(completed, failed, total):
+                print(f"\n  {C.BRIGHT_CYAN}Progress: {completed + failed}/{total} "
+                      f"({completed} completed, {failed} failed){C.RESET}\n")
 
         scanner.on_scan_start = on_start
         scanner.on_scan_complete = on_complete
@@ -3164,13 +5139,36 @@ SpiderFoot is required to scan domains. Would you like to install it now?
         results = scanner.process_queue(progress_callback=on_progress)
 
     except KeyboardInterrupt:
-        print_warning("\n\nScanning paused. Progress has been saved.")
-        print_info("Use option [3] to resume, or [4] to check queue status.")
+        if CYBER_UI_AVAILABLE:
+            cyber_warning("\n\nScanning paused. Progress has been saved")
+            cyber_info("Use option [3] to resume, or [4] to check queue status")
+        else:
+            print_warning("\n\nScanning paused. Progress has been saved.")
+            print_info("Use option [3] to resume, or [4] to check queue status.")
         get_input("\nPress Enter to return to main menu...")
         return
 
     # Show results
-    print(f"""
+    if CYBER_UI_AVAILABLE:
+        from rich.panel import Panel
+        from rich.text import Text
+
+        result_text = Text()
+        result_text.append("✓ ", style="bold green")
+        result_text.append("Scanning complete!\n\n", style="bold white")
+        result_text.append("  Total scans:     ", style="dim white")
+        result_text.append(f"{results['total']}\n", style="bold")
+        result_text.append("  Completed:       ", style="dim white")
+        result_text.append(f"{results['completed']}\n", style="bold green")
+        result_text.append("  Failed:          ", style="dim white")
+        result_text.append(f"{results['failed']}\n\n", style="bold red")
+        result_text.append("  CSV exports saved to: ", style="dim white")
+        result_text.append(f"{sf_output}", style="cyan")
+
+        console.print(Panel(result_text, title="[bold green]⟨ SCAN COMPLETE ⟩[/]", border_style="green"))
+        console.print()
+    else:
+        print(f"""
 {C.BRIGHT_GREEN}{'━' * 60}{C.RESET}
 {C.GREEN}✓{C.RESET} Scanning complete!
 
@@ -3183,14 +5181,22 @@ SpiderFoot is required to scan domains. Would you like to install it now?
 """)
 
     if results['failed'] > 0:
-        if confirm("Retry failed scans?"):
+        do_retry = cyber_confirm("Retry failed scans?") if CYBER_UI_AVAILABLE else confirm("Retry failed scans?")
+        if do_retry:
             tracker.retry_failed()
-            print_info("Failed scans reset. Run this option again to retry.")
+            if CYBER_UI_AVAILABLE:
+                cyber_info("Failed scans reset. Run this option again to retry")
+            else:
+                print_info("Failed scans reset. Run this option again to retry.")
 
-    if confirm("\nProceed to Puppet Analysis on these exports?"):
+    do_proceed = cyber_confirm("\nProceed to Puppet Analysis on these exports?") if CYBER_UI_AVAILABLE else confirm("\nProceed to Puppet Analysis on these exports?")
+    if do_proceed:
         # Remember the output dir for analysis
         remember_output_dir(sf_output)
-        print_info("Use option [5] Run Puppet Analysis and point to this directory.")
+        if CYBER_UI_AVAILABLE:
+            cyber_info("Use option [5] Run Puppet Analysis and point to this directory")
+        else:
+            print_info("Use option [5] Run Puppet Analysis and point to this directory.")
 
     get_input("\nPress Enter to return to main menu...")
 
@@ -3198,13 +5204,23 @@ SpiderFoot is required to scan domains. Would you like to install it now?
 def check_scan_status_menu():
     """Show scan queue status"""
     clear_screen()
-    print_banner()
-    print_section("Scan Queue Status", C.BRIGHT_CYAN)
+
+    # Use cyberpunk UI if available
+    if CYBER_UI_AVAILABLE:
+        console = get_console()
+        cyber_banner_queue()
+        cyber_header("SCAN QUEUE STATUS")
+    else:
+        print_banner()
+        print_section("Scan Queue Status", C.BRIGHT_CYAN)
 
     try:
         from discovery.jobs import JobTracker
     except ImportError as e:
-        print_error(f"Discovery module not available: {e}")
+        if CYBER_UI_AVAILABLE:
+            cyber_error(f"Discovery module not available: {e}")
+        else:
+            print_error(f"Discovery module not available: {e}")
         get_input("\nPress Enter to return to main menu...")
         return
 
@@ -3237,7 +5253,33 @@ def check_scan_status_menu():
         else:
             status_str = "initializing..."
 
-        print(f"""
+        if CYBER_UI_AVAILABLE:
+            from rich.panel import Panel
+            from rich.text import Text
+            from rich.progress import BarColumn, Progress, TextColumn, TaskProgressColumn
+
+            # Create progress display
+            scan_text = Text()
+            scan_text.append("⚡ BACKGROUND SCAN IN PROGRESS\n\n", style="bold yellow")
+            scan_text.append(f"  [{bar}] {pct:3d}%\n\n", style="cyan")
+            scan_text.append(f"  Queue:    ", style="dim white")
+            scan_text.append(f"{progress}/{bg_stats['total']}", style="bold cyan")
+            scan_text.append(f" scans  ({bg_stats['completed']} completed, {bg_stats['failed']} failed)\n", style="white")
+            scan_text.append(f"  Elapsed:  ", style="dim white")
+            scan_text.append(f"{elapsed}\n\n", style="yellow")
+            scan_text.append(f"  Domain:   ", style="dim white")
+            scan_text.append(f"{current[:50]}\n", style="bold white")
+            scan_text.append(f"  Status:   ", style="dim white")
+            scan_text.append(f"{status_str[:50]}\n", style="magenta")
+            scan_text.append(f"  Results:  ", style="dim white")
+            scan_text.append(f"{results_found}", style="green")
+            scan_text.append(f"  |  File: ", style="dim white")
+            scan_text.append(f"{file_size_kb:,.1f} KB", style="cyan")
+
+            console.print(Panel(scan_text, title="[bold yellow]⟨ ACTIVE SCAN ⟩[/]", border_style="yellow"))
+            console.print()
+        else:
+            print(f"""
 {C.BRIGHT_YELLOW}╔═══════════════════════════════════════════════════════════════════════════════╗
 ║  🔄 BACKGROUND SCAN IN PROGRESS                                                ║
 ╠═══════════════════════════════════════════════════════════════════════════════╣
@@ -3254,7 +5296,25 @@ def check_scan_status_menu():
 ╚═══════════════════════════════════════════════════════════════════════════════╝{C.RESET}
 """)
 
-    print(f"""
+    if CYBER_UI_AVAILABLE:
+        from rich.panel import Panel
+        from rich.text import Text
+        from rich.table import Table
+
+        # Queue status table
+        queue_table = Table(show_header=False, box=None, padding=(0, 2))
+        queue_table.add_column("Label", style="dim white")
+        queue_table.add_column("Value", style="bold")
+        queue_table.add_row("Total jobs", f"{stats['total']}")
+        queue_table.add_row("Pending", f"[cyan]{stats['pending']}[/]")
+        queue_table.add_row("Running", f"[yellow]{stats['running']}[/]")
+        queue_table.add_row("Completed", f"[green]{stats['completed']}[/]")
+        queue_table.add_row("Failed", f"[red]{stats['failed']}[/]")
+
+        console.print(Panel(queue_table, title="[bold cyan]⟨ QUEUE STATUS ⟩[/]", border_style="cyan"))
+        console.print()
+    else:
+        print(f"""
 {C.WHITE}Queue Status (from tracker):{C.RESET}
 {C.DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{C.RESET}
 
@@ -3266,36 +5326,68 @@ def check_scan_status_menu():
 """)
 
     if stats['total'] == 0:
-        print_info("No jobs in queue. Use option [1] or [2] to add domains.")
+        if CYBER_UI_AVAILABLE:
+            cyber_info("No jobs in queue. Use option [1] or [2] to add domains")
+        else:
+            print_info("No jobs in queue. Use option [1] or [2] to add domains.")
     else:
         # Show some details
         if stats['completed'] > 0:
-            print(f"\n{C.WHITE}Completed Scans:{C.RESET}")
-            for job in tracker.get_completed()[:5]:
-                print(f"  {C.GREEN}✓{C.RESET} {job.domain}")
-            if stats['completed'] > 5:
-                print(f"  {C.DIM}... and {stats['completed'] - 5} more{C.RESET}")
+            if CYBER_UI_AVAILABLE:
+                console.print("[bold white]Completed Scans:[/]")
+                for job in tracker.get_completed()[:5]:
+                    console.print(f"  [green]✓[/] {job.domain}")
+                if stats['completed'] > 5:
+                    console.print(f"  [dim]... and {stats['completed'] - 5} more[/]")
+            else:
+                print(f"\n{C.WHITE}Completed Scans:{C.RESET}")
+                for job in tracker.get_completed()[:5]:
+                    print(f"  {C.GREEN}✓{C.RESET} {job.domain}")
+                if stats['completed'] > 5:
+                    print(f"  {C.DIM}... and {stats['completed'] - 5} more{C.RESET}")
 
         if stats['failed'] > 0:
-            print(f"\n{C.WHITE}Failed Scans:{C.RESET}")
-            for job in tracker.get_failed()[:5]:
-                print(f"  {C.RED}✗{C.RESET} {job.domain}: {job.error[:40] if job.error else 'Unknown error'}")
-            if stats['failed'] > 5:
-                print(f"  {C.DIM}... and {stats['failed'] - 5} more{C.RESET}")
+            if CYBER_UI_AVAILABLE:
+                console.print("\n[bold white]Failed Scans:[/]")
+                for job in tracker.get_failed()[:5]:
+                    error_msg = job.error[:40] if job.error else 'Unknown error'
+                    console.print(f"  [red]✗[/] {job.domain}: [dim]{error_msg}[/]")
+                if stats['failed'] > 5:
+                    console.print(f"  [dim]... and {stats['failed'] - 5} more[/]")
+            else:
+                print(f"\n{C.WHITE}Failed Scans:{C.RESET}")
+                for job in tracker.get_failed()[:5]:
+                    print(f"  {C.RED}✗{C.RESET} {job.domain}: {job.error[:40] if job.error else 'Unknown error'}")
+                if stats['failed'] > 5:
+                    print(f"  {C.DIM}... and {stats['failed'] - 5} more{C.RESET}")
 
         if stats['pending'] > 0:
-            print(f"\n{C.WHITE}Pending Scans:{C.RESET}")
-            for job in tracker.get_pending()[:5]:
-                print(f"  {C.CYAN}○{C.RESET} {job.domain}")
-            if stats['pending'] > 5:
-                print(f"  {C.DIM}... and {stats['pending'] - 5} more{C.RESET}")
+            if CYBER_UI_AVAILABLE:
+                console.print("\n[bold white]Pending Scans:[/]")
+                for job in tracker.get_pending()[:5]:
+                    console.print(f"  [cyan]○[/] {job.domain}")
+                if stats['pending'] > 5:
+                    console.print(f"  [dim]... and {stats['pending'] - 5} more[/]")
+            else:
+                print(f"\n{C.WHITE}Pending Scans:{C.RESET}")
+                for job in tracker.get_pending()[:5]:
+                    print(f"  {C.CYAN}○{C.RESET} {job.domain}")
+                if stats['pending'] > 5:
+                    print(f"  {C.DIM}... and {stats['pending'] - 5} more{C.RESET}")
 
-    print()
+    if CYBER_UI_AVAILABLE:
+        console.print()
+    else:
+        print()
 
     # Build options menu
     while True:
-        print(f"\n{C.WHITE}Options:{C.RESET}")
-        print(f"{C.DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{C.RESET}")
+        if CYBER_UI_AVAILABLE:
+            console.print("\n[bold white]Options:[/]")
+            cyber_divider()
+        else:
+            print(f"\n{C.WHITE}Options:{C.RESET}")
+            print(f"{C.DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{C.RESET}")
 
         options = []
         # Always show refresh if scan is running
@@ -3311,18 +5403,32 @@ def check_scan_status_menu():
         options.append(('back', "Back to main menu"))
 
         for i, (key, label) in enumerate(options, 1):
-            if key == 'refresh':
-                print(f"  [{i}] {C.CYAN}🔄{C.RESET} {label}")
-            elif key == 'watch':
-                print(f"  [{i}] {C.CYAN}👁{C.RESET}  {label}")
-            elif key == 'retry':
-                print(f"  [{i}] {C.YELLOW}🔄{C.RESET} {label}")
-            elif key == 'clear_completed':
-                print(f"  [{i}] {C.GREEN}✓{C.RESET} {label}")
-            elif key == 'clear_all':
-                print(f"  [{i}] {C.RED}⚠{C.RESET} {label}")
+            if CYBER_UI_AVAILABLE:
+                if key == 'refresh':
+                    console.print(f"  [bold cyan][{i}][/] [cyan]↻[/] {label}")
+                elif key == 'watch':
+                    console.print(f"  [bold cyan][{i}][/] [cyan]◉[/] {label}")
+                elif key == 'retry':
+                    console.print(f"  [bold yellow][{i}][/] [yellow]↻[/] {label}")
+                elif key == 'clear_completed':
+                    console.print(f"  [bold green][{i}][/] [green]✓[/] {label}")
+                elif key == 'clear_all':
+                    console.print(f"  [bold red][{i}][/] [red]⚠[/] {label}")
+                else:
+                    console.print(f"  [{i}] {label}")
             else:
-                print(f"  [{i}] {label}")
+                if key == 'refresh':
+                    print(f"  [{i}] {C.CYAN}🔄{C.RESET} {label}")
+                elif key == 'watch':
+                    print(f"  [{i}] {C.CYAN}👁{C.RESET}  {label}")
+                elif key == 'retry':
+                    print(f"  [{i}] {C.YELLOW}🔄{C.RESET} {label}")
+                elif key == 'clear_completed':
+                    print(f"  [{i}] {C.GREEN}✓{C.RESET} {label}")
+                elif key == 'clear_all':
+                    print(f"  [{i}] {C.RED}⚠{C.RESET} {label}")
+                else:
+                    print(f"  [{i}] {label}")
 
         choice = get_input(f"\nSelect option [1-{len(options)}]: ").strip()
 
@@ -3343,13 +5449,21 @@ def check_scan_status_menu():
                 elif action == 'watch':
                     # Watch mode - auto-refresh every 3 seconds for more responsive updates
                     import time
-                    print(f"\n{C.CYAN}Watch mode active. Refreshing every 3s. Press Ctrl+C to stop.{C.RESET}")
+                    if CYBER_UI_AVAILABLE:
+                        console.print("\n[cyan]Watch mode active. Refreshing every 3s. Press Ctrl+C to stop.[/]")
+                    else:
+                        print(f"\n{C.CYAN}Watch mode active. Refreshing every 3s. Press Ctrl+C to stop.{C.RESET}")
                     try:
                         while is_background_scan_running():
                             time.sleep(3)
                             clear_screen()
-                            print_banner()
-                            print_section("Scan Queue Status - LIVE", C.BRIGHT_CYAN)
+
+                            if CYBER_UI_AVAILABLE:
+                                cyber_banner_queue()
+                                cyber_header("SCAN QUEUE STATUS - LIVE")
+                            else:
+                                print_banner()
+                                print_section("Scan Queue Status - LIVE", C.BRIGHT_CYAN)
 
                             # Show live stats
                             bg_stats = get_background_scan_stats()
@@ -3374,7 +5488,31 @@ def check_scan_status_menu():
                             else:
                                 status_str = "initializing..."
 
-                            print(f"""
+                            if CYBER_UI_AVAILABLE:
+                                from rich.panel import Panel
+                                from rich.text import Text
+
+                                live_text = Text()
+                                live_text.append("⚡ LIVE SCAN PROGRESS\n\n", style="bold yellow")
+                                live_text.append(f"  [{bar}] {pct:3d}%\n\n", style="cyan")
+                                live_text.append(f"  Queue:     ", style="dim white")
+                                live_text.append(f"{progress}/{bg_stats['total']}", style="bold cyan")
+                                live_text.append(f" scans  ({bg_stats['completed']} completed, {bg_stats['failed']} failed)\n", style="white")
+                                live_text.append(f"  Elapsed:   ", style="dim white")
+                                live_text.append(f"{elapsed}\n\n", style="yellow")
+                                live_text.append(f"  Domain:    ", style="dim white")
+                                live_text.append(f"{current[:50]}\n", style="bold white")
+                                live_text.append(f"  Status:    ", style="dim white")
+                                live_text.append(f"{status_str[:50]}\n", style="magenta")
+                                live_text.append(f"  Results:   ", style="dim white")
+                                live_text.append(f"{results_found}", style="green")
+                                live_text.append(f" rows  |  File: ", style="dim white")
+                                live_text.append(f"{file_size_kb:,.1f} KB\n\n", style="cyan")
+                                live_text.append("  Press Ctrl+C to stop watching", style="dim italic")
+
+                                console.print(Panel(live_text, title="[bold yellow]⟨ LIVE MONITOR ⟩[/]", border_style="yellow"))
+                            else:
+                                print(f"""
 {C.BRIGHT_YELLOW}╔═══════════════════════════════════════════════════════════════════════════════╗
 ║  🔄 LIVE SCAN PROGRESS                                                         ║
 ╠═══════════════════════════════════════════════════════════════════════════════╣
@@ -3398,46 +5536,73 @@ def check_scan_status_menu():
                             tracker_fresh = JobTracker()
                             completed_jobs = tracker_fresh.get_completed()[-3:]
                             if completed_jobs:
-                                print(f"{C.WHITE}Recent completions:{C.RESET}")
-                                for job in reversed(completed_jobs):
-                                    print(f"  {C.GREEN}✓{C.RESET} {job.domain}")
+                                if CYBER_UI_AVAILABLE:
+                                    console.print("[bold white]Recent completions:[/]")
+                                    for job in reversed(completed_jobs):
+                                        console.print(f"  [green]✓[/] {job.domain}")
+                                else:
+                                    print(f"{C.WHITE}Recent completions:{C.RESET}")
+                                    for job in reversed(completed_jobs):
+                                        print(f"  {C.GREEN}✓{C.RESET} {job.domain}")
 
                         # Scan finished
-                        print(f"\n{C.GREEN}Scan complete!{C.RESET}")
+                        if CYBER_UI_AVAILABLE:
+                            cyber_success("Scan complete!")
+                        else:
+                            print(f"\n{C.GREEN}Scan complete!{C.RESET}")
                         time.sleep(2)
                         check_scan_status_menu()
                         return
 
                     except KeyboardInterrupt:
-                        print(f"\n{C.DIM}Watch mode stopped.{C.RESET}")
+                        if CYBER_UI_AVAILABLE:
+                            console.print("\n[dim]Watch mode stopped.[/]")
+                        else:
+                            print(f"\n{C.DIM}Watch mode stopped.{C.RESET}")
                         time.sleep(1)
                         check_scan_status_menu()
                         return
 
                 elif action == 'retry':
                     count = tracker.retry_failed()
-                    print_success(f"Reset {count} failed jobs for retry.")
+                    if CYBER_UI_AVAILABLE:
+                        cyber_success(f"Reset {count} failed jobs for retry")
+                    else:
+                        print_success(f"Reset {count} failed jobs for retry.")
                     stats = tracker.get_stats()  # Refresh stats
 
                 elif action == 'clear_completed':
                     tracker.clear_completed()
-                    print_success("Cleared completed jobs.")
+                    if CYBER_UI_AVAILABLE:
+                        cyber_success("Cleared completed jobs")
+                    else:
+                        print_success("Cleared completed jobs.")
                     stats = tracker.get_stats()  # Refresh stats
 
                 elif action == 'clear_all':
-                    if confirm("Are you sure? This cannot be undone.", default=False):
+                    do_clear = cyber_confirm("Are you sure? This cannot be undone.", default=False) if CYBER_UI_AVAILABLE else confirm("Are you sure? This cannot be undone.", default=False)
+                    if do_clear:
                         tracker.clear_all()
-                        print_success("Cleared all jobs.")
+                        if CYBER_UI_AVAILABLE:
+                            cyber_success("Cleared all jobs")
+                        else:
+                            print_success("Cleared all jobs.")
                         stats = tracker.get_stats()  # Refresh stats
 
                 elif action == 'back':
                     break
             else:
-                print_error("Invalid option")
+                if CYBER_UI_AVAILABLE:
+                    cyber_error("Invalid option")
+                else:
+                    print_error("Invalid option")
         except ValueError:
             if choice.lower() in ('q', 'quit', 'back', 'b'):
                 break
-            print_error("Please enter a number")
+            if CYBER_UI_AVAILABLE:
+                cyber_error("Please enter a number")
+            else:
+                print_error("Please enter a number")
 
 
 # =============================================================================
@@ -3446,37 +5611,72 @@ def check_scan_status_menu():
 def run_analysis():
     """Run the full sock puppet detection analysis"""
     clear_screen()
-    print_banner()
+
+    # Use cyberpunk UI if available
+    if CYBER_UI_AVAILABLE:
+        console = get_console()
+        cyber_banner_analysis()
+        cyber_header("PUPPET NETWORK ANALYZER")
+    else:
+        print_banner()
 
     # Get input directory
     input_dir = get_data_directory()
     if not input_dir:
-        print_error("Analysis cancelled - no input directory provided.")
+        if CYBER_UI_AVAILABLE:
+            cyber_error("Analysis cancelled - no input directory provided")
+        else:
+            print_error("Analysis cancelled - no input directory provided.")
         get_input("\nPress Enter to return to main menu...")
         return
 
     # Get output directory
     output_dir = get_output_directory()
     if not output_dir:
-        print_error("Analysis cancelled - no output directory provided.")
+        if CYBER_UI_AVAILABLE:
+            cyber_error("Analysis cancelled - no output directory provided")
+        else:
+            print_error("Analysis cancelled - no output directory provided.")
         get_input("\nPress Enter to return to main menu...")
         return
 
     # Confirmation
-    print_section("Ready to Analyze", C.BRIGHT_GREEN)
-    print(f"""
-{C.WHITE}Analysis Configuration:{C.RESET}
-  📂 Input:  {C.CYAN}{input_dir}{C.RESET}
-  📁 Output: {C.CYAN}{output_dir}{C.RESET}
-""")
+    if CYBER_UI_AVAILABLE:
+        from rich.panel import Panel
+        from rich.text import Text
 
-    if not confirm("Start the analysis?"):
-        print_info("Analysis cancelled.")
+        config_text = Text()
+        config_text.append("◈ Input:   ", style="dim white")
+        config_text.append(f"{input_dir}\n", style="cyan")
+        config_text.append("◈ Output:  ", style="dim white")
+        config_text.append(f"{output_dir}", style="cyan")
+
+        console.print(Panel(config_text, title="[bold green]⟨ ANALYSIS CONFIGURATION ⟩[/]", border_style="green"))
+        console.print()
+
+        do_start = cyber_confirm("Start the analysis?")
+    else:
+        print_section("Ready to Analyze", C.BRIGHT_GREEN)
+        print(f"""
+{C.WHITE}Analysis Configuration:{C.RESET}
+  Input:  {C.CYAN}{input_dir}{C.RESET}
+  Output: {C.CYAN}{output_dir}{C.RESET}
+""")
+        do_start = confirm("Start the analysis?")
+
+    if not do_start:
+        if CYBER_UI_AVAILABLE:
+            cyber_info("Analysis cancelled")
+        else:
+            print_info("Analysis cancelled.")
         get_input("\nPress Enter to return to main menu...")
         return
 
     # Run the pipeline
-    print_section("Running Analysis", C.BRIGHT_MAGENTA)
+    if CYBER_UI_AVAILABLE:
+        cyber_header("RUNNING ANALYSIS")
+    else:
+        print_section("Running Analysis", C.BRIGHT_MAGENTA)
 
     try:
         # Import and run the pipeline
@@ -3488,25 +5688,472 @@ def run_analysis():
         success = run_full_pipeline(input_dir, output_dir)
 
         if success:
-            print()
-            print(f"{C.BRIGHT_GREEN}{'═' * 70}{C.RESET}")
-            animated_print(f"{random.choice(COMPLETION_MESSAGES)}", delay=0.02)
-            print(f"{C.BRIGHT_GREEN}{'═' * 70}{C.RESET}")
-            print()
-            print_info(f"Results saved to: {output_dir}")
-            print_info(f"Start with: {os.path.join(output_dir, 'executive_summary.md')}")
+            if CYBER_UI_AVAILABLE:
+                console.print()
+                console.print("[bold green]" + "═" * 70 + "[/]")
+                animated_print(f"{random.choice(COMPLETION_MESSAGES)}", delay=0.02)
+                console.print("[bold green]" + "═" * 70 + "[/]")
+                console.print()
+                cyber_info(f"Results saved to: {output_dir}")
+                cyber_info(f"Start with: {os.path.join(output_dir, 'executive_summary.md')}")
+            else:
+                print()
+                print(f"{C.BRIGHT_GREEN}{'═' * 70}{C.RESET}")
+                animated_print(f"{random.choice(COMPLETION_MESSAGES)}", delay=0.02)
+                print(f"{C.BRIGHT_GREEN}{'═' * 70}{C.RESET}")
+                print()
+                print_info(f"Results saved to: {output_dir}")
+                print_info(f"Start with: {os.path.join(output_dir, 'executive_summary.md')}")
         else:
-            print_error("Analysis completed with errors. Check the output directory for details.")
+            if CYBER_UI_AVAILABLE:
+                cyber_error("Analysis completed with errors. Check the output directory for details")
+            else:
+                print_error("Analysis completed with errors. Check the output directory for details.")
 
     except ImportError as e:
-        print_error(f"Failed to import pipeline modules: {e}")
-        print_info("Make sure you're running from the correct directory.")
+        if CYBER_UI_AVAILABLE:
+            cyber_error(f"Failed to import pipeline modules: {e}")
+            cyber_info("Make sure you're running from the correct directory")
+        else:
+            print_error(f"Failed to import pipeline modules: {e}")
+            print_info("Make sure you're running from the correct directory.")
     except Exception as e:
-        print_error(f"Analysis failed: {e}")
+        if CYBER_UI_AVAILABLE:
+            cyber_error(f"Analysis failed: {e}")
+        else:
+            print_error(f"Analysis failed: {e}")
         import traceback
         traceback.print_exc()
 
     get_input("\nPress Enter to return to main menu...")
+
+
+# =============================================================================
+# WILDCARD DNS ANALYZER
+# =============================================================================
+def run_wildcard_analyzer():
+    """Run the Signal//Noise Wildcard DNS Analyzer"""
+    clear_screen()
+
+    # Use cyberpunk UI if available
+    if CYBER_UI_AVAILABLE:
+        console = get_console()
+        cyber_banner_wildcard()
+        cyber_header("SIGNAL//NOISE WILDCARD DNS ANALYZER")
+
+        from rich.panel import Panel
+        from rich.text import Text
+
+        desc_text = Text()
+        desc_text.append("This tool investigates whether enumerated subdomains are real or\n", style="white")
+        desc_text.append("just wildcard DNS artifacts (false positives).\n\n", style="white")
+        desc_text.append("Use this when you see suspicious domains with thousands of subdomains\n", style="dim")
+        desc_text.append("that might be inflating your cluster results.", style="dim")
+
+        console.print(Panel(desc_text, border_style="cyan", padding=(0, 2)))
+        console.print()
+
+        # Options menu
+        console.print("[bold yellow]Options:[/]")
+        console.print("  [bold white][1][/] Quick Check - Test a domain for wildcard DNS")
+        console.print("  [bold white][2][/] Full Analysis - Deep dive with SpiderFoot data correlation")
+        console.print("  [bold white][3][/] Load from Puppet Analysis - Auto-detect suspects from results")
+        console.print("  [bold white][4][/] Back to main menu")
+        console.print()
+    else:
+        print_banner()
+        print_section("Signal//Noise Wildcard DNS Analyzer", C.BRIGHT_CYAN)
+
+        print(f"""
+{C.WHITE}This tool investigates whether enumerated subdomains are real or
+just wildcard DNS artifacts (false positives).{C.RESET}
+
+{C.DIM}Use this when you see suspicious domains with thousands of subdomains
+that might be inflating your cluster results.{C.RESET}
+""")
+
+        print(f"{C.BRIGHT_YELLOW}Options:{C.RESET}")
+        print(f"  {C.WHITE}[1]{C.RESET} Quick Check - Test a domain for wildcard DNS")
+        print(f"  {C.WHITE}[2]{C.RESET} Full Analysis - Deep dive with SpiderFoot data correlation")
+        print(f"  {C.WHITE}[3]{C.RESET} Load from Puppet Analysis - Auto-detect suspects from results")
+        print(f"  {C.WHITE}[4]{C.RESET} Back to main menu")
+        print()
+
+    choice = get_input("Select an option")
+    if choice is None or choice == '4':
+        return
+
+    if choice == '1':
+        # Quick check
+        domain = get_input("Enter domain to check (e.g., example.io)")
+        if not domain:
+            if CYBER_UI_AVAILABLE:
+                cyber_warning("No domain provided")
+            else:
+                print_warning("No domain provided.")
+            get_input("\nPress Enter to return to main menu...")
+            return
+
+        if CYBER_UI_AVAILABLE:
+            console.print()
+            cyber_info(f"Testing {domain} for wildcard DNS...")
+        else:
+            print()
+            print_info(f"Testing {domain} for wildcard DNS...")
+
+        try:
+            from wildcardDNS_analyzer import quick_wildcard_check, TerminalUI
+
+            results = quick_wildcard_check([domain])
+            result = results.get(domain, {})
+
+            if result.get('is_wildcard'):
+                if CYBER_UI_AVAILABLE:
+                    console.print()
+                    console.print("  [bold yellow][!] WILDCARD DNS DETECTED[/]")
+                    console.print(f"      Domain: [bold white]{domain}[/]")
+                    console.print(f"      Wildcard IP: [cyan]{result.get('wildcard_ip', 'unknown')}[/]")
+                    console.print(f"      Confidence: {result.get('confidence', 'unknown')}")
+                    console.print()
+                    console.print("  [dim]This domain responds to ANY subdomain query.[/]")
+                    console.print("  [dim]Enumerated subdomains are likely false positives.[/]")
+                else:
+                    print()
+                    print(f"  {C.YELLOW}[!] WILDCARD DNS DETECTED{C.RESET}")
+                    print(f"      Domain: {C.WHITE}{domain}{C.RESET}")
+                    print(f"      Wildcard IP: {C.CYAN}{result.get('wildcard_ip', 'unknown')}{C.RESET}")
+                    print(f"      Confidence: {result.get('confidence', 'unknown')}")
+                    print()
+                    print(f"  {C.DIM}This domain responds to ANY subdomain query.{C.RESET}")
+                    print(f"  {C.DIM}Enumerated subdomains are likely false positives.{C.RESET}")
+            else:
+                if CYBER_UI_AVAILABLE:
+                    console.print()
+                    console.print("  [bold green][+] NO WILDCARD PATTERN[/]")
+                    console.print(f"      Domain: [bold white]{domain}[/]")
+                    console.print(f"      Confidence: {result.get('confidence', 'unknown')}")
+                    console.print()
+                    console.print("  [dim]This domain does NOT have wildcard DNS.[/]")
+                    console.print("  [dim]Enumerated subdomains are likely real.[/]")
+                else:
+                    print()
+                    print(f"  {C.GREEN}[+] NO WILDCARD PATTERN{C.RESET}")
+                    print(f"      Domain: {C.WHITE}{domain}{C.RESET}")
+                    print(f"      Confidence: {result.get('confidence', 'unknown')}")
+                    print()
+                    print(f"  {C.DIM}This domain does NOT have wildcard DNS.{C.RESET}")
+                    print(f"  {C.DIM}Enumerated subdomains are likely real.{C.RESET}")
+
+        except ImportError as e:
+            if CYBER_UI_AVAILABLE:
+                cyber_error(f"Failed to import wildcard analyzer: {e}")
+                cyber_info("Make sure dnspython is installed: pip install dnspython")
+            else:
+                print_error(f"Failed to import wildcard analyzer: {e}")
+                print_info("Make sure dnspython is installed: pip install dnspython")
+        except Exception as e:
+            if CYBER_UI_AVAILABLE:
+                cyber_error(f"Quick check failed: {e}")
+            else:
+                print_error(f"Quick check failed: {e}")
+
+    elif choice == '2':
+        # Full analysis
+        domain = get_input("Enter domain to analyze (e.g., example.io)")
+        if not domain:
+            if CYBER_UI_AVAILABLE:
+                cyber_warning("No domain provided")
+            else:
+                print_warning("No domain provided.")
+            get_input("\nPress Enter to return to main menu...")
+            return
+
+        # Get SpiderFoot directory
+        if CYBER_UI_AVAILABLE:
+            console.print()
+            cyber_info("For full analysis, provide the SpiderFoot export directory")
+        else:
+            print()
+            print_info("For full analysis, provide the SpiderFoot export directory.")
+        spiderfoot_dir = get_input("SpiderFoot exports directory (or Enter to skip)")
+
+        # Get output directory
+        config = load_config()
+        default_output = config.get('last_output_dir', './output')
+        output_dir = get_input(f"Output directory [{default_output}]") or default_output
+
+        if CYBER_UI_AVAILABLE:
+            console.print()
+            cyber_info(f"Starting full analysis of {domain}...")
+            cyber_info("This may take a few minutes...")
+            console.print()
+        else:
+            print()
+            print_info(f"Starting full analysis of {domain}...")
+            print_info("This may take a few minutes...")
+            print()
+
+        try:
+            from wildcardDNS_analyzer import WildcardAnalyzer
+
+            analyzer = WildcardAnalyzer(
+                domain=domain,
+                spiderfoot_dir=spiderfoot_dir if spiderfoot_dir else None,
+                output_dir=output_dir
+            )
+
+            results = analyzer.run_full_analysis()
+
+            if CYBER_UI_AVAILABLE:
+                console.print()
+                cyber_success("Analysis complete!")
+                cyber_info(f"Reports saved to: {output_dir}")
+            else:
+                print()
+                print_success("Analysis complete!")
+                print_info(f"Reports saved to: {output_dir}")
+
+        except ImportError as e:
+            if CYBER_UI_AVAILABLE:
+                cyber_error(f"Failed to import wildcard analyzer: {e}")
+                cyber_info("Make sure dnspython is installed: pip install dnspython")
+            else:
+                print_error(f"Failed to import wildcard analyzer: {e}")
+                print_info("Make sure dnspython is installed: pip install dnspython")
+        except Exception as e:
+            if CYBER_UI_AVAILABLE:
+                cyber_error(f"Full analysis failed: {e}")
+            else:
+                print_error(f"Full analysis failed: {e}")
+            import traceback
+            traceback.print_exc()
+
+    elif choice == '3':
+        # Load from Puppet Analysis
+        _wildcard_load_from_puppet()
+
+    get_input("\nPress Enter to return to main menu...")
+
+
+def _wildcard_load_from_puppet():
+    """Load wildcard suspects from Puppet Analysis results"""
+    try:
+        from wildcardDNS_analyzer import (
+            find_results_directories,
+            parse_wildcard_suspects_from_summary,
+            find_spiderfoot_exports_dir,
+            WildcardAnalyzer
+        )
+    except ImportError as e:
+        print_error(f"Failed to import wildcard analyzer: {e}")
+        print_info("Make sure dnspython is installed: pip install dnspython")
+        return
+
+    print()
+    print_section("Load from Puppet Analysis", C.BRIGHT_CYAN)
+
+    # Find results directories
+    results_dirs = find_results_directories()
+
+    if not results_dirs:
+        print_error("No PUPPETMASTER results directories found.")
+        print_info("Run Puppet Analysis [option 5] first to generate results.")
+        print()
+        # Debug: show where we looked
+        saved_dirs = get_remembered_output_dirs()
+        if saved_dirs:
+            print_info(f"Config has {len(saved_dirs)} saved path(s), but none contain executive_summary.md:")
+            for d in saved_dirs[:3]:
+                print(f"      {C.DIM}- {d}{C.RESET}")
+        else:
+            print_info(f"No saved paths in config. Config location: {CONFIG_FILE}")
+            if not CONFIG_FILE.exists():
+                print(f"      {C.DIM}(Config file does not exist){C.RESET}")
+        return
+
+    # Show available directories
+    print_info(f"Found {len(results_dirs)} results director{'y' if len(results_dirs) == 1 else 'ies'}:")
+    print()
+
+    for i, d in enumerate(results_dirs[:10], 1):
+        from datetime import datetime
+        mtime = datetime.fromtimestamp(d.stat().st_mtime).strftime('%Y-%m-%d %H:%M')
+        print(f"  {C.BRIGHT_YELLOW}[{i}]{C.RESET} {d.name} {C.DIM}({mtime}){C.RESET}")
+
+    if len(results_dirs) > 10:
+        print(f"  {C.DIM}... and {len(results_dirs) - 10} more{C.RESET}")
+    print()
+
+    # Auto-select most recent or let user choose
+    choice = get_input("Select results directory", "1")
+
+    try:
+        idx = int(choice) - 1
+        if 0 <= idx < len(results_dirs):
+            selected_dir = results_dirs[idx]
+        else:
+            print_warning("Invalid selection, using most recent.")
+            selected_dir = results_dirs[0]
+    except ValueError:
+        from pathlib import Path
+        if Path(choice).exists():
+            selected_dir = Path(choice)
+        else:
+            print_warning("Invalid selection, using most recent.")
+            selected_dir = results_dirs[0]
+
+    print_success(f"Using: {selected_dir}")
+    print()
+
+    # Parse wildcard suspects
+    suspects = parse_wildcard_suspects_from_summary(selected_dir)
+
+    if not suspects:
+        print_warning("No wildcard DNS suspects found in this analysis.")
+        print_info("This could mean:")
+        print(f"      {C.DIM}- No domains were flagged as potential wildcards{C.RESET}")
+        print(f"      {C.DIM}- The analysis didn't run wildcard detection{C.RESET}")
+        print()
+
+        if confirm("Would you like to manually enter a domain to analyze?"):
+            domain = get_input("Enter domain to analyze")
+            if domain:
+                _run_wildcard_full_analysis(domain)
+        return
+
+    # Display suspects
+    print(f"{C.BRIGHT_YELLOW}Found {len(suspects)} wildcard DNS suspect(s):{C.RESET}")
+    print()
+
+    for i, s in enumerate(suspects, 1):
+        print(f"  {C.BRIGHT_YELLOW}[{i}]{C.RESET} {s['domain']} {C.DIM}(IP: {s['wildcard_ip']}, Confidence: {s['confidence']}){C.RESET}")
+    print()
+
+    # Find SpiderFoot exports directory
+    sf_dir = find_spiderfoot_exports_dir()
+    if sf_dir:
+        print_info(f"SpiderFoot exports: {sf_dir}")
+
+    # Let user choose which domain to analyze
+    print()
+    print(f"{C.WHITE}Which domain would you like to analyze?{C.RESET}")
+    print(f"  {C.DIM}Enter number, domain name, or 'all' for batch analysis{C.RESET}")
+    print()
+
+    selection = get_input("Selection", "1")
+
+    domains_to_analyze = []
+
+    if selection.lower() == 'all':
+        domains_to_analyze = [s['domain'] for s in suspects]
+    else:
+        try:
+            idx = int(selection) - 1
+            if 0 <= idx < len(suspects):
+                domains_to_analyze = [suspects[idx]['domain']]
+        except ValueError:
+            for s in suspects:
+                if selection.lower() in s['domain'].lower():
+                    domains_to_analyze.append(s['domain'])
+            if not domains_to_analyze:
+                domains_to_analyze = [selection]
+
+    if not domains_to_analyze:
+        print_warning("No domain selected.")
+        return
+
+    # Confirm SpiderFoot directory
+    if sf_dir:
+        if not confirm(f"Use SpiderFoot exports from {sf_dir}?"):
+            sf_input = get_input("SpiderFoot exports directory (or Enter to skip)")
+            from pathlib import Path
+            sf_dir = Path(sf_input) if sf_input else None
+    else:
+        sf_input = get_input("SpiderFoot exports directory (or Enter to skip)")
+        from pathlib import Path
+        sf_dir = Path(sf_input) if sf_input else None
+
+    # Run analysis for each domain
+    # Ensure wildcard_outputs directory exists
+    from pathlib import Path
+    wildcard_dir = Path("./wildcard_outputs")
+    wildcard_dir.mkdir(exist_ok=True)
+
+    for domain in domains_to_analyze:
+        print()
+        print(f"{C.BRIGHT_CYAN}{'=' * 70}{C.RESET}")
+        print_info(f"Analyzing: {domain}")
+        print(f"{C.BRIGHT_CYAN}{'=' * 70}{C.RESET}")
+        print()
+
+        from datetime import datetime
+        output_dir = str(wildcard_dir / f"wildcard_analysis_{domain.replace('.', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+
+        try:
+            analyzer = WildcardAnalyzer(
+                domain=domain,
+                spiderfoot_dir=str(sf_dir) if sf_dir else None,
+                output_dir=output_dir
+            )
+
+            results = analyzer.run_full_analysis()
+
+            print()
+            print_success(f"Analysis complete. Reports saved to: {output_dir}")
+
+        except Exception as e:
+            print_error(f"Analysis failed for {domain}: {e}")
+
+    print()
+    print_success("All analyses complete!")
+
+
+def _run_wildcard_full_analysis(domain: str):
+    """Helper to run full wildcard analysis on a single domain"""
+    try:
+        from wildcardDNS_analyzer import WildcardAnalyzer, find_spiderfoot_exports_dir
+    except ImportError as e:
+        print_error(f"Failed to import wildcard analyzer: {e}")
+        return
+
+    sf_dir = find_spiderfoot_exports_dir()
+    if sf_dir:
+        print_info(f"Found SpiderFoot exports: {sf_dir}")
+        if not confirm(f"Use this directory?"):
+            sf_input = get_input("SpiderFoot exports directory (or Enter to skip)")
+            from pathlib import Path
+            sf_dir = Path(sf_input) if sf_input else None
+    else:
+        sf_input = get_input("SpiderFoot exports directory (or Enter to skip)")
+        from pathlib import Path
+        sf_dir = Path(sf_input) if sf_input else None
+
+    from datetime import datetime
+    # Save to wildcard_outputs/ subdirectory
+    wildcard_dir = Path("./wildcard_outputs")
+    wildcard_dir.mkdir(exist_ok=True)
+    output_dir = str(wildcard_dir / f"wildcard_analysis_{domain.replace('.', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+
+    print()
+    print_info(f"Starting full analysis of {domain}...")
+    print()
+
+    try:
+        analyzer = WildcardAnalyzer(
+            domain=domain,
+            spiderfoot_dir=str(sf_dir) if sf_dir else None,
+            output_dir=output_dir
+        )
+
+        results = analyzer.run_full_analysis()
+
+        print()
+        print_success("Analysis complete!")
+        print_info(f"Reports saved to: {output_dir}")
+
+    except Exception as e:
+        print_error(f"Analysis failed: {e}")
+
 
 # =============================================================================
 # MAIN ENTRY POINT
@@ -3525,18 +6172,91 @@ def main():
         print_error("Environment setup failed. Please resolve the issues above and try again.")
         sys.exit(1)
 
+    # Kali Linux detection and bootstrap
+    if KALI_MODULE_AVAILABLE:
+        print_section("OS Detection", C.BRIGHT_BLUE)
+        is_kali, os_info = kali_startup_check(print_func=print)
+        if is_kali:
+            print_success("Kali Linux enhanced mode enabled!")
+            time.sleep(1)
+        else:
+            print_info(f"Running on {os_info.os_name} - standard mode")
+        time.sleep(1)
+
     time.sleep(1)
+
+    # Report UI mode
+    print_section("UI Mode", C.BRIGHT_MAGENTA)
+    if USE_CYBERPUNK_HUD and CYBERPUNK_HUD_AVAILABLE:
+        if sys.stdin.isatty():
+            print_success("Cyberpunk HUD enabled (TTY detected)")
+        else:
+            print_warning("Cyberpunk HUD disabled (no TTY - using classic menu)")
+    else:
+        if not CYBERPUNK_HUD_AVAILABLE:
+            print_info("Classic menu (Cyberpunk HUD not available - 'rich' not installed?)")
+        else:
+            print_info("Classic menu (Cyberpunk HUD disabled)")
+    time.sleep(1)
+
+    # Clear any buffered input from startup (prevents accidental quit)
+    try:
+        import termios
+        termios.tcflush(sys.stdin, termios.TCIFLUSH)
+    except Exception:
+        pass  # Ignore on Windows or if stdin isn't a terminal
 
     # Main menu loop
     while True:
-        show_main_menu()
-        choice = get_input("Select an option")
+        # Use Cyberpunk HUD if available and enabled
+        if USE_CYBERPUNK_HUD and CYBERPUNK_HUD_AVAILABLE:
+            try:
+                # Get scan mode function if Kali is available
+                get_scan_mode = None
+                if KALI_MODULE_AVAILABLE:
+                    try:
+                        from kali.integration import get_current_scan_mode
+                        get_scan_mode = get_current_scan_mode
+                    except ImportError:
+                        pass
 
-        # Handle Ctrl+C at main menu = exit gracefully
-        if choice is None:
-            choice = 'q'
+                hud_key = run_cyberpunk_hud_menu(
+                    load_config=load_config,
+                    is_background_scan_running=is_background_scan_running,
+                    get_background_scan_stats=get_background_scan_stats,
+                    should_show_kali_menu=should_show_kali_menu,
+                    is_enhanced_mode=is_enhanced_mode if KALI_MODULE_AVAILABLE else None,
+                    get_kali_status_line=get_kali_status_line if KALI_MODULE_AVAILABLE else None,
+                    get_scan_mode=get_scan_mode,
+                )
+                choice = map_hud_key_to_choice(hud_key)
+            except Exception as e:
+                # Fallback to classic menu on error - show WHY it failed
+                clear_screen()
+                print_banner()
+                print()
+                print_warning(f"Cyberpunk HUD unavailable: {e}")
+                print_info("Falling back to classic menu. Press Enter to continue...")
+                try:
+                    input()
+                except (EOFError, KeyboardInterrupt):
+                    pass
+                show_main_menu()
+                choice = get_input("Select an option")
+                if choice is None:
+                    choice = 'q'
+                else:
+                    choice = choice.lower()
         else:
-            choice = choice.lower()
+            # Classic menu
+            show_main_menu()
+            choice = get_input("Select an option")
+
+            # Handle Ctrl+C at main menu = exit gracefully
+            if choice is None:
+                choice = 'q'
+            else:
+                choice = choice.lower()
 
         # Discovery & Scanning
         if choice == '1':
@@ -3544,7 +6264,7 @@ def main():
         elif choice == '2':
             load_domains_menu()
         elif choice == '3':
-            run_spiderfoot_scans_menu()
+            spiderfoot_control_center_menu()  # Unified SpiderFoot Control Center
         elif choice == '4':
             check_scan_status_menu()
         # Analysis
@@ -3562,8 +6282,23 @@ def main():
         elif choice == '10':
             launch_glances()
         elif choice == '11':
-            launch_spiderfoot_gui()
-        elif choice in ('q', 'quit', 'exit', ''):
+            run_wildcard_analyzer()  # Moved from 12
+        # Legacy option redirects (for backward compatibility)
+        elif choice == '12':
+            run_wildcard_analyzer()  # Keep 12 working for old muscle memory
+        # Kali Enhanced Mode options
+        elif choice.startswith('k') and KALI_MODULE_AVAILABLE:
+            handled = handle_enhanced_menu_choice(
+                choice,
+                print_func=print,
+                get_input_func=get_input,
+                clear_func=clear_screen,
+                colors=C
+            )
+            if not handled:
+                print_warning("Invalid Kali option.")
+                time.sleep(1)
+        elif choice in ('q', 'quit', 'exit'):
             # Check if background scan is running
             if is_background_scan_running():
                 print_warning("Background scan is still running!")

@@ -33,3 +33,18 @@ spiderfoot/
 
 # SpiderFoot exports (add your own)
 spiderfoot_exports/
+spiderfoot_export/
+
+# Dev containers (not for distribution)
+.devcontainer/
+
+# Internal docs (working notes)
+docs/
+
+# Domain lists with private data
+domain_lists/*.txt
+!domain_lists/.gitkeep
+
+# Config with private data
+config/*.json
+!config/.gitkeep

@@ -7,12 +7,64 @@ and persists state for resume capability.
 """
 
 import json
+import re
 import threading
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict
 from enum import Enum
+
+
+def sanitize_domain(domain: str) -> Optional[str]:
+    """
+    Sanitize and validate a domain name.
+
+    Handles:
+    - Removing protocols (http://, https://)
+    - Removing paths and query strings
+    - Removing port numbers
+    - Removing leading/trailing whitespace and dots
+    - Lowercasing
+
+    Returns:
+        Cleaned domain name, or None if invalid
+    """
+    if not domain:
+        return None
+
+    domain = domain.strip().lower()
+
+    # Remove protocol
+    if domain.startswith('http://'):
+        domain = domain[7:]
+    elif domain.startswith('https://'):
+        domain = domain[8:]
+
+    # Remove path/query/fragment
+    domain = domain.split('/')[0]
+    domain = domain.split('?')[0]
+    domain = domain.split('#')[0]
+
+    # Remove port number
+    domain = domain.split(':')[0]
+
+    # Remove leading/trailing dots and whitespace
+    domain = domain.strip('. \t\n\r')
+
+    # Basic validation: must have at least one dot, no spaces, reasonable length
+    if not domain or ' ' in domain or '.' not in domain:
+        return None
+
+    # Must match basic domain pattern (alphanumeric, hyphens, dots)
+    if not re.match(r'^[a-z0-9][a-z0-9\-\.]*[a-z0-9]$', domain):
+        return None
+
+    # No consecutive dots
+    if '..' in domain:
+        return None
+
+    return domain
 
 
 class JobStatus(Enum):
@@ -120,7 +172,7 @@ class JobTracker:
                     # Delete corrupted file
                     try:
                         self.state_file.unlink()
-                    except:
+                    except Exception:
                         pass
                 except Exception as e:
                     print(f"Warning: Could not load state file: {e}")
@@ -157,48 +209,56 @@ class JobTracker:
         Add domains to the job queue.
 
         Args:
-            domains: List of domain names
+            domains: List of domain names (URLs and raw domains accepted)
 
         Returns:
-            Number of new domains added (excludes duplicates)
+            Number of new domains added (excludes duplicates and invalid entries)
         """
         added = 0
-        for domain in domains:
-            domain = domain.strip().lower()
-            if domain and domain not in self.jobs:
-                self.jobs[domain] = ScanJob(domain=domain)
-                added += 1
+        with self._lock:
+            for domain in domains:
+                # Sanitize and validate domain
+                clean_domain = sanitize_domain(domain)
+                if clean_domain and clean_domain not in self.jobs:
+                    self.jobs[clean_domain] = ScanJob(domain=clean_domain)
+                    added += 1
         self.save_state()
         return added
 
     def get_pending(self) -> List[ScanJob]:
         """Get all pending jobs."""
-        return [j for j in self.jobs.values() if j.status == JobStatus.PENDING.value]
+        with self._lock:
+            return [j for j in self.jobs.values() if j.status == JobStatus.PENDING.value]
 
     def get_running(self) -> List[ScanJob]:
         """Get all running jobs."""
-        return [j for j in self.jobs.values() if j.status == JobStatus.RUNNING.value]
+        with self._lock:
+            return [j for j in self.jobs.values() if j.status == JobStatus.RUNNING.value]
 
     def get_completed(self) -> List[ScanJob]:
         """Get all completed jobs."""
-        return [j for j in self.jobs.values() if j.status == JobStatus.COMPLETED.value]
+        with self._lock:
+            return [j for j in self.jobs.values() if j.status == JobStatus.COMPLETED.value]
 
     def get_failed(self) -> List[ScanJob]:
         """Get all failed jobs."""
-        return [j for j in self.jobs.values() if j.status == JobStatus.FAILED.value]
+        with self._lock:
+            return [j for j in self.jobs.values() if j.status == JobStatus.FAILED.value]
 
     def get_job(self, domain: str) -> Optional[ScanJob]:
         """Get a specific job by domain."""
-        return self.jobs.get(domain.lower())
+        with self._lock:
+            return self.jobs.get(domain.lower())
 
     def update_job(self, domain: str, **kwargs):
         """Update a job's attributes."""
-        job = self.jobs.get(domain.lower())
-        if job:
-            for key, value in kwargs.items():
-                if hasattr(job, key):
-                    setattr(job, key, value)
-            self.save_state()
+        with self._lock:
+            job = self.jobs.get(domain.lower())
+            if job:
+                for key, value in kwargs.items():
+                    if hasattr(job, key):
+                        setattr(job, key, value)
+        self.save_state()
 
     def retry_failed(self) -> int:
         """
@@ -207,40 +267,45 @@ class JobTracker:
         Returns:
             Number of jobs reset
         """
-        count = 0
-        for job in self.get_failed():
-            job.reset_for_retry()
-            count += 1
+        with self._lock:
+            count = 0
+            for job in list(self.jobs.values()):
+                if job.status == JobStatus.FAILED.value:
+                    job.reset_for_retry()
+                    count += 1
         self.save_state()
         return count
 
     def clear_completed(self):
         """Remove completed jobs from the queue."""
-        self.jobs = {
-            domain: job for domain, job in self.jobs.items()
-            if job.status != JobStatus.COMPLETED.value
-        }
+        with self._lock:
+            self.jobs = {
+                domain: job for domain, job in self.jobs.items()
+                if job.status != JobStatus.COMPLETED.value
+            }
         self.save_state()
 
     def clear_all(self):
         """Clear all jobs."""
-        self.jobs = {}
+        with self._lock:
+            self.jobs = {}
         self.save_state()
 
     def get_stats(self) -> dict:
         """Get queue statistics."""
-        statuses = {}
-        for job in self.jobs.values():
-            statuses[job.status] = statuses.get(job.status, 0) + 1
+        with self._lock:
+            statuses = {}
+            for job in self.jobs.values():
+                statuses[job.status] = statuses.get(job.status, 0) + 1
 
-        return {
-            'total': len(self.jobs),
-            'pending': statuses.get(JobStatus.PENDING.value, 0),
-            'running': statuses.get(JobStatus.RUNNING.value, 0),
-            'completed': statuses.get(JobStatus.COMPLETED.value, 0),
-            'failed': statuses.get(JobStatus.FAILED.value, 0),
-            'cancelled': statuses.get(JobStatus.CANCELLED.value, 0),
-        }
+            return {
+                'total': len(self.jobs),
+                'pending': statuses.get(JobStatus.PENDING.value, 0),
+                'running': statuses.get(JobStatus.RUNNING.value, 0),
+                'completed': statuses.get(JobStatus.COMPLETED.value, 0),
+                'failed': statuses.get(JobStatus.FAILED.value, 0),
+                'cancelled': statuses.get(JobStatus.CANCELLED.value, 0),
+            }
 
     def get_progress_string(self) -> str:
         """Get a human-readable progress string."""

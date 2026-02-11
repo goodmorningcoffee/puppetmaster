@@ -12,7 +12,16 @@ import io
 from pathlib import Path
 from typing import List, Dict, Generator, Tuple
 from collections import defaultdict
-from tqdm import tqdm
+
+# Optional tqdm import with fallback
+try:
+    from tqdm import tqdm
+    HAS_TQDM = True
+except ImportError:
+    HAS_TQDM = False
+    # Fallback: simple iterator that does nothing
+    def tqdm(iterable, **kwargs):
+        return iterable
 
 # =============================================================================
 # CONSTANTS
@@ -58,7 +67,8 @@ def clean_text(text: str) -> str:
 def count_csv_lines(filepath: Path) -> int:
     """Count lines in a CSV file efficiently"""
     with open(filepath, 'rb') as f:
-        return sum(1 for _ in f) - 1  # Subtract header
+        count = sum(1 for _ in f)
+    return max(0, count - 1)  # Subtract header, but never return negative
 
 
 def extract_domain_from_filename(filepath: Path) -> str:

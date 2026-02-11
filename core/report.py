@@ -18,6 +18,36 @@ from typing import Dict, List
 from .signals import Signal, SignalTier, summarize_signals
 from .network import NetworkAnalyzer, DomainConnection, DomainCluster, HubAnalysis, summarize_network
 
+
+def sanitize_csv_value(value):
+    """
+    Sanitize a value for safe CSV output to prevent CSV injection attacks.
+
+    CSV injection occurs when a cell value starts with =, +, -, @, or tab/carriage return,
+    which can be interpreted as formulas by spreadsheet applications.
+
+    Args:
+        value: The value to sanitize
+
+    Returns:
+        Sanitized string safe for CSV export
+    """
+    if value is None:
+        return ""
+
+    value = str(value)
+
+    # Characters that can trigger formula interpretation in spreadsheets
+    dangerous_chars = ('=', '+', '-', '@', '\t', '\r', '\n')
+
+    # If value starts with dangerous character, prefix with single quote
+    # This is the standard mitigation recommended by OWASP
+    if value and value[0] in dangerous_chars:
+        return "'" + value
+
+    return value
+
+
 # =============================================================================
 # EXECUTIVE SUMMARY GENERATOR
 # =============================================================================
@@ -27,7 +57,8 @@ def generate_executive_summary(
     signals: Dict,
     analyzer: NetworkAnalyzer,
     hubs: List[HubAnalysis],
-    data_summary: Dict
+    data_summary: Dict,
+    wildcard_suspects: Dict = None
 ) -> str:
     """Generate the executive summary markdown file"""
 
@@ -130,6 +161,37 @@ These domains have high connectivity and may be central to the network.
     else:
         md += "*No obvious hub domains detected.*\n"
 
+    # Add wildcard DNS suspects section if available
+    if wildcard_suspects:
+        confirmed_wildcards = {d: v for d, v in wildcard_suspects.items()
+                              if v.get('is_wildcard', False)}
+
+        if confirmed_wildcards:
+            md += f"""
+
+---
+
+## ⚠️ Potential Wildcard DNS False Positives
+
+The following domains show wildcard DNS patterns and may inflate enumerated subdomain counts.
+Subdomains from these domains should be treated with caution.
+
+| Domain | Wildcard IP | Confidence |
+|--------|-------------|------------|
+"""
+            for domain, info in list(confirmed_wildcards.items())[:15]:
+                wildcard_ip = info.get('wildcard_ip', 'unknown')
+                confidence = info.get('confidence', 'unknown')
+                md += f"| {domain} | {wildcard_ip} | {confidence} |\n"
+
+            if len(confirmed_wildcards) > 15:
+                md += f"\n*...and {len(confirmed_wildcards) - 15} more wildcard domains.*\n"
+
+            md += """
+**Recommendation:** Run `python3 wildcardDNS_analyzer.py --domain <domain> --full` for deep analysis.
+
+"""
+
     md += f"""
 
 ---
@@ -222,13 +284,14 @@ def export_smoking_guns(output_dir: Path, analyzer: NetworkAnalyzer):
 
         for conn in analyzer.get_confirmed_connections():
             for sg in conn.smoking_guns:
+                # Sanitize values to prevent CSV injection attacks
                 writer.writerow([
-                    conn.domain1,
-                    conn.domain2,
-                    sg.signal_type,
-                    sg.value,
-                    sg.description,
-                    sg.source_module
+                    sanitize_csv_value(conn.domain1),
+                    sanitize_csv_value(conn.domain2),
+                    sanitize_csv_value(sg.signal_type),
+                    sanitize_csv_value(sg.value),
+                    sanitize_csv_value(sg.description),
+                    sanitize_csv_value(sg.source_module)
                 ])
 
     print(f"✓ Smoking guns CSV: {filepath}")
@@ -246,13 +309,14 @@ def export_clusters(output_dir: Path, clusters: List[DomainCluster]):
         ])
 
         for cluster in clusters:
+            # Sanitize values to prevent CSV injection attacks
             writer.writerow([
-                cluster.cluster_id,
-                cluster.confidence,
+                sanitize_csv_value(cluster.cluster_id),
+                sanitize_csv_value(cluster.confidence),
                 cluster.size,
-                cluster.hub_domain,
+                sanitize_csv_value(cluster.hub_domain),
                 cluster.smoking_gun_count,
-                "; ".join(sorted(cluster.domains))
+                sanitize_csv_value("; ".join(sorted(cluster.domains)))
             ])
 
     print(f"✓ Clusters CSV: {filepath}")
@@ -271,15 +335,16 @@ def export_hubs(output_dir: Path, hubs: List[HubAnalysis]):
         ])
 
         for hub in hubs:
+            # Sanitize values to prevent CSV injection attacks
             writer.writerow([
-                hub.domain,
+                sanitize_csv_value(hub.domain),
                 hub.is_potential_c2,
                 hub.connection_count,
                 hub.confirmed_connections,
                 hub.likely_connections,
                 f"{hub.betweenness_centrality:.6f}",
                 f"{hub.pagerank:.6f}",
-                "; ".join(hub.connected_domains[:20])
+                sanitize_csv_value("; ".join(hub.connected_domains[:20]))
             ])
 
     print(f"✓ Hub analysis CSV: {filepath}")
@@ -308,14 +373,15 @@ def export_all_connections(output_dir: Path, analyzer: NetworkAnalyzer):
         )
 
         for conn in connections:
+            # Sanitize values to prevent CSV injection attacks
             writer.writerow([
-                conn.domain1,
-                conn.domain2,
-                conn.confidence,
+                sanitize_csv_value(conn.domain1),
+                sanitize_csv_value(conn.domain2),
+                sanitize_csv_value(conn.confidence),
                 conn.total_signals,
                 len(conn.smoking_guns),
                 len(conn.strong_signals),
-                conn.evidence_summary
+                sanitize_csv_value(conn.evidence_summary)
             ])
 
     print(f"✓ All connections CSV: {filepath}")
@@ -342,13 +408,14 @@ def export_signals(output_dir: Path, signals: Dict):
         )
 
         for signal in sorted_signals:
+            # Sanitize values to prevent CSV injection attacks
             writer.writerow([
-                signal.signal_type,
-                signal.tier.value,
-                signal.value[:200],  # Truncate long values
+                sanitize_csv_value(signal.signal_type),
+                sanitize_csv_value(signal.tier.value),
+                sanitize_csv_value(signal.value[:200]),  # Truncate long values
                 len(signal.domains),
-                "; ".join(sorted(signal.domains)[:20]),
-                signal.description
+                sanitize_csv_value("; ".join(sorted(signal.domains)[:20])),
+                sanitize_csv_value(signal.description)
             ])
 
     print(f"✓ Signals CSV: {filepath}")
@@ -363,7 +430,8 @@ def generate_all_reports(
     signals: Dict,
     analyzer: NetworkAnalyzer,
     hubs: List[HubAnalysis],
-    data_summary: Dict
+    data_summary: Dict,
+    wildcard_suspects: Dict = None
 ):
     """Generate all reports and exports"""
     print("\n📝 Generating reports...")
@@ -371,8 +439,8 @@ def generate_all_reports(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Generate executive summary
-    generate_executive_summary(output_dir, signals, analyzer, hubs, data_summary)
+    # Generate executive summary (with wildcard suspects if available)
+    generate_executive_summary(output_dir, signals, analyzer, hubs, data_summary, wildcard_suspects)
 
     # Export CSVs
     export_smoking_guns(output_dir, analyzer)

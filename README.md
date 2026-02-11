@@ -4,6 +4,46 @@
 
 > *"Finding the strings that connect the puppets"*
 
+```
+╭─────────────────────────────────────────────────────────────────────────────────────────────╮
+│ MISSION STATUS  Q:357 ██████  S:24 ████░░  C:3 ██░░░░  BL:231  [SCANNING]                   │
+╰─────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ LOADOUT ────────────────────────────────╮  ╭─ ACTIVE MISSION ──────────────────────────────╮
+│                                          │  │                                               │
+│  DISCOVERY & SCANNING                    │  │  [5] PUPPET ANALYSIS                          │
+│  ────────────────────                    │  │  Detect Sock Puppet Networks                  │
+│   [1] Scrape domains (keywords)          │  │                                               │
+│   [2] Load domains (file)                │  │  Analyze SpiderFoot exports to detect         │
+│  >[3] SpiderFoot Control Center          │  │  domains sharing infrastructure signals       │
+│   [4] Check scan queue                   │  │  that prove common ownership.                 │
+│                                          │  │                                               │
+│  ANALYSIS                                │  │  - Graph-based network analysis               │
+│  ────────                                │  │  - Community detection clustering             │
+│   [5] Puppet Analysis                    │  │  - Executive summary reports                  │
+│   [6] View results                       │  ╰───────────────────────────────────────────────╯
+│   [11] Wildcard DNS filter               │  ╭─ SYSTEM VITALS ───────────────────────────────╮
+│                                          │  │  CPU  [████░░░░░░░░░░░░]  23%                 │
+│  SETTINGS                                │  │  MEM  [██████░░░░░░░░░░]  41%                 │
+│  ────────                                │  │  DISK [████████░░░░░░░░]  54%                 │
+│   [7] Configuration                      │  ╰───────────────────────────────────────────────╯
+│   [8] Help & Documentation               │  ╭─ SCAN QUEUE ──────────────────────────────────╮
+│   [9] Launch in tmux                     │  │  357 domains ready                            │
+│   [10] System monitor                    │  │  Scanning: competitor-site.com                │
+│                                          │  │  Progress: 24/357 (7%)                        │
+│  SPIDERFOOT CONTROL CENTER [3]:          │  ╰───────────────────────────────────────────────╯
+│  ──────────────────────────              │  ╭───────────────────────────────────────────────╮
+│   [1] Start Batch Scans                  │  │  ██████╗ ██╗   ██╗██████╗ ██████╗ ███████╗    │
+│   [2] View Scan Status                   │  │  ██╔══██╗██║   ██║██╔══██╗██╔══██╗██╔════╝    │
+│   [3] Open Web GUI                       │  │  ██████╔╝██║   ██║██████╔╝██████╔╝█████╗      │
+│   [4] Reset SpiderFoot DB                │  │  ██╔═══╝ ██║   ██║██╔═══╝ ██╔═══╝ ██╔══╝      │
+│   [5] Kill SpiderFoot                    │  │  ██║     ╚██████╔╝██║     ██║     ███████╗    │
+│   [I] Install SpiderFoot                 │  │  ╚═╝      ╚═════╝ ╚═╝     ╚═╝     ╚══════╝    │
+╰──────────────────────────────────────────╯  ╰───────────────────────────────────────────────╯
+╭─────────────────────────────────────────────────────────────────────────────────────────────╮
+│ DEPLOY [ENTER]    SELECT [UP/DOWN]    DIRECT [1-11]    EXIT [Q]                             │
+╰─────────────────────────────────────────────────────────────────────────────────────────────╯
+```
+
 PUPPETMASTER is an end-to-end pipeline for detecting coordinated networks of domains ("sock puppets") that are secretly controlled by the same entity. It combines domain discovery, [SpiderFoot](https://github.com/smicallef/spiderfoot) OSINT scanning, and graph-based network analysis.
 
 ---
@@ -64,7 +104,7 @@ cd puppetmaster
 python3 puppetmaster.py
 ```
 
-That's it! The interactive menu guides you through everything.
+That's it! The Cyberpunk HUD launches automatically and guides you through everything.
 
 ### Platform-Specific Notes
 
@@ -73,6 +113,8 @@ That's it! The interactive menu guides you through everything.
 # If needed, install Python and pip:
 sudo apt update && sudo apt install python3 python3-pip python3-venv
 ```
+
+**Kali Linux:** Automatically detects and enables additional OSINT tools (theHarvester, Amass, DNSRecon, etc.)
 
 **macOS:**
 ```bash
@@ -87,36 +129,8 @@ brew install python3
 
 **AWS EC2 / Cloud Servers:**
 - Works great on t3.micro or larger
-- Use Option 9 (tmux) to keep scans running after SSH disconnect
-- Use Option 11 (Web GUI) with SSH tunnel for interactive access
-
----
-
-## The Main Menu
-
-```
-╔═══════════════════════════════════════════════════════════╗
-║   PUPPETMASTER - SpiderFoot Sock Puppet Detector          ║
-╚═══════════════════════════════════════════════════════════╝
-
-  DISCOVERY & SCANNING
-  [1]  Scrape domains via keywords        - Google/DuckDuckGo search
-  [2]  Load domains from file             - Import domain list
-  [3]  Run SpiderFoot scans (CLI)         - Batch mode scanning
-  [4]  Check scan queue status            - Monitor progress
-  [11] SpiderFoot Web GUI                 - Interactive browser mode
-
-  ANALYSIS
-  [5]  Run Puppet Analysis                - Detect sock puppet networks
-  [6]  View previous results              - Browse past analyses
-
-  SETTINGS
-  [7]  Configuration                      - Paths and settings
-  [8]  Help & Documentation               - Full guide
-  [9]  Launch in tmux                     - For long scans
-  [10] System monitor                     - Resource usage
-  [q]  Quit
-```
+- Use Option [9] (tmux) to keep scans running after SSH disconnect
+- Use **[3] SpiderFoot Control Center** → **Open Web GUI** with SSH tunnel for interactive access
 
 ---
 
@@ -126,8 +140,8 @@ brew install python3
 
 1. **Start PUPPETMASTER:** `python3 puppetmaster.py`
 2. **[1] Scrape domains** - Enter keywords like "competitor keyword site" to find domains
-3. **[3] Run SpiderFoot** - Scans all discovered domains (takes hours for many domains)
-4. **[5] Run Analysis** - Detects connections and generates reports
+3. **[3] SpiderFoot Control Center** → Start Batch Scans - Scans all discovered domains
+4. **[5] Run Puppet Analysis** - Detects connections and generates reports
 
 ### Option B: Analyze Existing SpiderFoot Data
 
@@ -141,7 +155,7 @@ If you already have SpiderFoot CSV exports:
 
 For exploring SpiderFoot's full capabilities:
 
-1. **[11] SpiderFoot Web GUI** - Launches SpiderFoot's web interface
+1. **[3] SpiderFoot Control Center** → **Open Web GUI** - Launches SpiderFoot's web interface
 2. **Open browser** to http://localhost:5001 (or use SSH tunnel for remote)
 3. **Create scans manually**, export results when done
 4. **[5] Run Analysis** on exported CSVs
@@ -164,7 +178,7 @@ http://localhost:5001
 
 ### For Long-Running Scans:
 
-Use **Option 9** to launch in tmux. Your scan keeps running even if SSH disconnects:
+Use **Option [9]** to launch in tmux. Your scan keeps running even if SSH disconnects:
 
 ```bash
 # Detach from session:
@@ -207,6 +221,26 @@ tmux attach -t puppetmaster
 
 ---
 
+## Kali Linux Integration
+
+When running on Kali Linux, PUPPETMASTER automatically detects and integrates with additional OSINT tools:
+
+| Tool | Purpose |
+|------|---------|
+| theHarvester | Email and subdomain enumeration |
+| Amass | Advanced DNS enumeration |
+| DNSRecon | DNS record analysis |
+| Sublist3r | Subdomain discovery |
+| Fierce | DNS reconnaissance |
+| WhatWeb | Web technology fingerprinting |
+| wafw00f | WAF detection |
+| SSLScan | SSL/TLS analysis |
+| Nmap | Port and service scanning |
+
+These tools are automatically detected and integrated when running on Kali Linux.
+
+---
+
 ## Dependencies
 
 Core dependencies are auto-installed on first run:
@@ -220,6 +254,10 @@ matplotlib      # Visualization
 python-louvain  # Community detection (REQUIRED for accurate clustering)
 googlesearch-python  # Google search
 ddgs            # DuckDuckGo search
+rich            # Terminal UI
+psutil          # System monitoring
+dnspython       # DNS resolution
+simple-term-menu  # Domain review UI
 ```
 
 ---

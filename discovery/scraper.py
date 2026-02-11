@@ -6,12 +6,47 @@ Scrapes Google and DuckDuckGo to find domains related to keywords.
 No API keys required - uses safe/slow mode with delays to avoid blocking.
 """
 
+import os
 import time
 import random
 import re
 from typing import List, Set, Optional, Callable
 from urllib.parse import urlparse
 import tldextract
+
+
+def validate_file_path(filepath: str) -> Optional[str]:
+    """
+    Validate and sanitize a file path to prevent path traversal attacks.
+
+    Args:
+        filepath: The file path to validate
+
+    Returns:
+        Sanitized absolute path, or None if invalid/dangerous
+    """
+    if not filepath:
+        return None
+
+    filepath = filepath.strip()
+
+    # Expand user home directory (~)
+    filepath = os.path.expanduser(filepath)
+
+    # Normalize and get absolute path
+    filepath = os.path.abspath(os.path.normpath(filepath))
+
+    # Block path traversal attempts
+    if '..' in filepath:
+        return None
+
+    # Block access to sensitive system directories
+    sensitive_paths = ['/etc/', '/usr/', '/bin/', '/sbin/', '/var/', '/root/']
+    for sensitive in sensitive_paths:
+        if filepath.startswith(sensitive):
+            return None
+
+    return filepath
 
 # Try to import search libraries
 try:
@@ -286,7 +321,7 @@ class DomainScraper:
         self.domains = all_domains
         return all_domains
 
-    def load_from_file(self, filepath: str) -> tuple[Set[str], List[str]]:
+    def load_from_file(self, filepath: str) -> "tuple[Set[str], List[str]]":
         """
         Load domains from a text file.
 
@@ -299,8 +334,14 @@ class DomainScraper:
         valid = set()
         invalid = []
 
+        # Validate file path to prevent path traversal
+        safe_path = validate_file_path(filepath)
+        if safe_path is None:
+            self.errors.append(f"Invalid or unsafe file path: {filepath}")
+            return valid, invalid
+
         try:
-            with open(filepath, 'r', encoding='utf-8') as f:
+            with open(safe_path, 'r', encoding='utf-8') as f:
                 for line_num, line in enumerate(f, 1):
                     line = line.strip()
 

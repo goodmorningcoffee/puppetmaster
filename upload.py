@@ -32,6 +32,8 @@ import subprocess
 import os
 import sys
 import json
+import shlex
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -102,13 +104,71 @@ def log(level, message):
 
 def sanitize_input(text):
     """Remove terminal escape sequences and control characters from input"""
-    import re
     # Remove ANSI escape sequences (arrow keys, colors, etc.)
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     text = ansi_escape.sub('', text)
     # Remove other control characters
     text = ''.join(c for c in text if c.isprintable() or c in ' \t')
     return text.strip()
+
+
+def validate_path(path, must_exist=False, base_dir=None):
+    """
+    Validate a file path to prevent path traversal attacks.
+
+    Args:
+        path: The path to validate
+        must_exist: If True, path must exist
+        base_dir: If provided, path must be within this directory
+
+    Returns:
+        Validated absolute path, or None if invalid
+    """
+    if not path:
+        return None
+
+    # Expand and normalize
+    path = os.path.expanduser(path)
+    path = os.path.abspath(os.path.normpath(path))
+
+    # Check for path traversal attempts in original input
+    if '..' in path or path.startswith('//'):
+        return None
+
+    # If base_dir specified, ensure path is within it
+    if base_dir:
+        base_dir = os.path.abspath(os.path.normpath(os.path.expanduser(base_dir)))
+        if not path.startswith(base_dir):
+            return None
+
+    # Check existence if required
+    if must_exist and not os.path.exists(path):
+        return None
+
+    return path
+
+
+def validate_remote_path(path):
+    """
+    Validate a remote path for shell safety.
+
+    Returns sanitized path or None if invalid.
+    """
+    if not path:
+        return None
+
+    path = path.strip()
+
+    # Allow ~ expansion but prevent shell injection
+    # Only allow alphanumeric, underscore, hyphen, dot, slash, and ~
+    if not re.match(r'^[~]?[a-zA-Z0-9_\-./]+$', path):
+        return None
+
+    # No double dots (path traversal) - but allow single dots for hidden dirs
+    if '..' in path:
+        return None
+
+    return path
 
 
 def load_config():
@@ -122,7 +182,7 @@ def load_config():
                     if isinstance(config[key], str):
                         config[key] = sanitize_input(config[key])
                 return config
-        except:
+        except Exception:
             pass
     return {}
 
@@ -198,11 +258,15 @@ def upload_files(host, user, key_path, local_dir, remote_dir):
     log("INFO", f"Uploading to {user}@{host}:{remote_dir}...")
 
     # Create remote directory
+    # Note: StrictHostKeyChecking=no is intentional for EC2 instances which frequently
+    # change host keys when instances are replaced. For production systems with stable
+    # host keys, consider using StrictHostKeyChecking=accept-new instead.
+    safe_remote = shlex.quote(remote_dir) if remote_dir else "'~/puppet'"
     mkdir_cmd = [
         "ssh", "-i", key_path,
         "-o", "StrictHostKeyChecking=no",
         f"{user}@{host}",
-        f"mkdir -p {remote_dir}"
+        f"mkdir -p {safe_remote}"
     ]
     subprocess.run(mkdir_cmd, capture_output=True)
 
@@ -210,8 +274,8 @@ def upload_files(host, user, key_path, local_dir, remote_dir):
     # Trailing slash on local_dir means "contents of" not "the directory itself"
     log("UPLOAD", "Syncing directory (recursive)...")
 
-    # Build SSH command for rsync - use shell=True approach for complex args
-    ssh_cmd = f"ssh -i '{key_path}' -o StrictHostKeyChecking=no"
+    # Build SSH command for rsync - quote paths for safety
+    ssh_cmd = f"ssh -i {shlex.quote(key_path)} -o StrictHostKeyChecking=no"
 
     rsync_cmd = [
         "rsync", "-avz", "--progress",
@@ -231,54 +295,87 @@ def upload_files(host, user, key_path, local_dir, remote_dir):
         log("UPLOAD", "Uploading directory contents via scp...")
         success = True
 
+        # Items to always skip
+        SKIP_ITEMS = {'__pycache__', 'venv', '.venv', '.git', 'node_modules', '.pytest_cache'}
+
         for item in os.listdir(local_dir):
             # Skip hidden files, junk, and venv directories
-            if item.startswith('.') or item in ('__pycache__', 'venv', '.venv'):
+            if item.startswith('.') or item in SKIP_ITEMS:
                 continue
 
             item_path = os.path.join(local_dir, item)
 
             # Get size for timeout calculation (larger files need more time)
+            # EXCLUDE venv/node_modules from size calculation
             try:
                 if os.path.isdir(item_path):
                     size_mb = sum(
                         os.path.getsize(os.path.join(root, f))
-                        for root, _, files in os.walk(item_path)
+                        for root, dirs, files in os.walk(item_path)
+                        if not any(skip in root for skip in SKIP_ITEMS)
                         for f in files
                     ) / (1024 * 1024)
                 else:
                     size_mb = os.path.getsize(item_path) / (1024 * 1024)
-            except:
+            except Exception:
                 size_mb = 10  # Default
 
-            # Timeout: 60 seconds base + 30 seconds per 10MB
-            timeout = max(120, int(60 + (size_mb / 10) * 30))
+            # Timeout: 120 seconds base + 60 seconds per 10MB (more generous)
+            timeout = max(180, int(120 + (size_mb / 10) * 60))
 
             log("UPLOAD", f"Uploading {item} ({size_mb:.1f} MB, timeout {timeout}s)...")
 
-            scp_cmd = [
-                "scp", "-r", "-C",  # -C for compression
-                "-i", key_path,
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "ConnectTimeout=30",
-                item_path,
-                f"{user}@{host}:{remote_dest}/"
-            ]
+            # For directories, use tar to properly exclude venv/node_modules
+            if os.path.isdir(item_path):
+                # Create tar with exclusions, pipe through ssh
+                # Use shlex.quote for all user-supplied values to prevent shell injection
+                excludes = ' '.join([f"--exclude={shlex.quote(s)}" for s in SKIP_ITEMS])
+                tar_cmd = (
+                    f"tar -czf - -C {shlex.quote(local_dir)} {excludes} {shlex.quote(item)} | "
+                    f"ssh -i {shlex.quote(key_path)} -o StrictHostKeyChecking=no "
+                    f"{shlex.quote(user)}@{shlex.quote(host)} "
+                    f"'cd {shlex.quote(remote_dest)} && tar -xzf -'"
+                )
 
-            try:
-                result = subprocess.run(scp_cmd, capture_output=True, text=True, timeout=timeout)
-                if result.returncode == 0:
-                    print(f"  {Colors.GREEN}✓{Colors.RESET} {item}")
-                else:
-                    error_msg = result.stderr.strip()[:80] if result.stderr else "Unknown error"
-                    print(f"  {Colors.RED}✗{Colors.RESET} {item}: {error_msg}")
+                try:
+                    result = subprocess.run(tar_cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+                    if result.returncode == 0:
+                        print(f"  {Colors.GREEN}✓{Colors.RESET} {item}")
+                    else:
+                        error_msg = result.stderr.strip()[:80] if result.stderr else "Unknown error"
+                        print(f"  {Colors.RED}✗{Colors.RESET} {item}: {error_msg}")
+                        success = False
+                except subprocess.TimeoutExpired:
+                    print(f"  {Colors.RED}✗{Colors.RESET} {item}: Timeout after {timeout}s")
                     success = False
-            except subprocess.TimeoutExpired:
-                print(f"  {Colors.RED}✗{Colors.RESET} {item}: Timeout after {timeout}s")
-                success = False
-            except Exception as e:
-                print(f"  {Colors.RED}✗{Colors.RESET} {item}: {e}")
-                success = False
+                except Exception as e:
+                    print(f"  {Colors.RED}✗{Colors.RESET} {item}: {e}")
+                    success = False
+            else:
+                # For files, use scp directly
+                scp_cmd = [
+                    "scp", "-C",  # -C for compression
+                    "-i", key_path,
+                    "-o", "StrictHostKeyChecking=no",
+                    "-o", "ConnectTimeout=30",
+                    item_path,
+                    f"{user}@{host}:{remote_dest}/"
+                ]
+
+                try:
+                    result = subprocess.run(scp_cmd, capture_output=True, text=True, timeout=timeout)
+                    if result.returncode == 0:
+                        print(f"  {Colors.GREEN}✓{Colors.RESET} {item}")
+                    else:
+                        error_msg = result.stderr.strip()[:80] if result.stderr else "Unknown error"
+                        print(f"  {Colors.RED}✗{Colors.RESET} {item}: {error_msg}")
+                        success = False
+                except subprocess.TimeoutExpired:
+                    print(f"  {Colors.RED}✗{Colors.RESET} {item}: Timeout after {timeout}s")
+                    success = False
+                except Exception as e:
+                    print(f"  {Colors.RED}✗{Colors.RESET} {item}: {e}")
+                    success = False
 
         return success
 
@@ -305,12 +402,14 @@ def upload_files(host, user, key_path, local_dir, remote_dir):
             return False
 
     # Make scripts executable (recursively)
+    # Note: remote_dir is validated before use, shlex.quote for extra safety
     log("INFO", "Making scripts executable...")
+    safe_remote = shlex.quote(remote_dir) if remote_dir else "'~/puppet'"
     chmod_cmd = [
         "ssh", "-i", key_path,
         "-o", "StrictHostKeyChecking=no",
         f"{user}@{host}",
-        f"find {remote_dir} -name '*.py' -o -name '*.sh' | xargs chmod +x 2>/dev/null || true"
+        f"find {safe_remote} -name '*.py' -o -name '*.sh' | xargs chmod +x 2>/dev/null || true"
     ]
     subprocess.run(chmod_cmd, capture_output=True)
 
@@ -409,11 +508,21 @@ def get_remote_dir():
     if not last_dir or last_dir.isspace():
         last_dir = '~/puppet'
 
+    # Validate saved path
+    if not validate_remote_path(last_dir):
+        last_dir = '~/puppet'
+
     print(f"\n{Colors.CYAN}Remote directory:{Colors.RESET} {last_dir}")
     new_dir = sanitize_input(input(f"Change? (Enter to keep, or type new path): "))
 
     if new_dir:
-        remote_dir = new_dir
+        # Validate new path for shell safety
+        validated = validate_remote_path(new_dir)
+        if not validated:
+            log("WARN", "Invalid path format. Using default ~/puppet")
+            remote_dir = '~/puppet'
+        else:
+            remote_dir = validated
     else:
         remote_dir = last_dir
 

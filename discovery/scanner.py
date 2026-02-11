@@ -10,12 +10,16 @@ import os
 import subprocess
 import time
 import shutil
+import threading
 from pathlib import Path
 from typing import Optional, Callable, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 from .jobs import JobTracker, ScanJob, JobStatus
+
+# Thread lock for debug log file writes
+_debug_log_lock = threading.Lock()
 
 
 class SpiderFootScanner:
@@ -35,7 +39,9 @@ class SpiderFootScanner:
         output_dir: str,
         max_parallel: int = 3,
         job_tracker: Optional[JobTracker] = None,
-        spiderfoot_python: Optional[str] = None
+        spiderfoot_python: Optional[str] = None,
+        timeout_seconds: int = 1800,
+        modules: Optional[str] = None
     ):
         """
         Initialize the scanner.
@@ -46,17 +52,25 @@ class SpiderFootScanner:
             max_parallel: Maximum concurrent scans (default: 3)
             job_tracker: Optional existing JobTracker instance
             spiderfoot_python: Path to Python interpreter in SpiderFoot venv
+            timeout_seconds: Timeout per scan in seconds (default: 1800 = 30 min)
+            modules: Comma-separated list of modules to use (default: None = all)
         """
         self.sf_path = Path(spiderfoot_path)
         self.output_dir = Path(output_dir)
         self.max_parallel = max_parallel
+        self.timeout_seconds = timeout_seconds
+        self.modules = modules
 
         # Use venv python if provided, otherwise try to find it
         if spiderfoot_python and os.path.exists(spiderfoot_python):
             self.sf_python = spiderfoot_python
         else:
-            # Try to find venv python relative to sf.py
-            venv_python = self.sf_path.parent / "venv" / "bin" / "python3"
+            # Try to find venv python relative to sf.py (OS-aware)
+            if os.name == 'nt':  # Windows
+                venv_python = self.sf_path.parent / "venv" / "Scripts" / "python.exe"
+            else:  # Linux/Mac
+                venv_python = self.sf_path.parent / "venv" / "bin" / "python3"
+
             if venv_python.exists():
                 self.sf_python = str(venv_python)
             else:
@@ -129,7 +143,7 @@ class SpiderFootScanner:
         return None
 
     @staticmethod
-    def verify_spiderfoot(sf_path: str, sf_python: Optional[str] = None) -> tuple[bool, str]:
+    def verify_spiderfoot(sf_path: str, sf_python: Optional[str] = None) -> "tuple[bool, str]":
         """
         Verify SpiderFoot installation works.
 
@@ -144,8 +158,12 @@ class SpiderFootScanner:
         if sf_python and os.path.exists(sf_python):
             python_cmd = sf_python
         else:
-            # Try to find venv python relative to sf.py
-            venv_python = Path(sf_path).parent / "venv" / "bin" / "python3"
+            # Try to find venv python relative to sf.py (OS-aware)
+            if os.name == 'nt':  # Windows
+                venv_python = Path(sf_path).parent / "venv" / "Scripts" / "python.exe"
+            else:  # Linux/Mac
+                venv_python = Path(sf_path).parent / "venv" / "bin" / "python3"
+
             if venv_python.exists():
                 python_cmd = str(venv_python)
             else:
@@ -167,7 +185,7 @@ class SpiderFootScanner:
         except Exception as e:
             return False, f"SpiderFoot check error: {str(e)}"
 
-    def run_single_scan(self, domain: str, progress_callback: Optional[Callable] = None) -> tuple[bool, str, Optional[str]]:
+    def run_single_scan(self, domain: str, progress_callback: Optional[Callable] = None) -> "tuple[bool, str, Optional[str]]":
         """
         Run a single SpiderFoot scan with real-time progress tracking.
 
@@ -193,10 +211,15 @@ class SpiderFootScanner:
             self.sf_python,
             str(self.sf_path),
             "-s", domain,
-            "-u", "all",      # Use all module types
             "-o", "csv",      # Output format (goes to stdout)
             # No -q flag - we want stderr for progress tracking
         ]
+
+        # Add module filter if specified
+        if self.modules:
+            cmd.extend(["-m", self.modules])
+        else:
+            cmd.extend(["-u", "all"])  # Use all module types
 
         # Progress tracking state
         progress_state = {
@@ -219,10 +242,11 @@ class SpiderFootScanner:
 
             progress_state['last_stderr'] = line
 
-            # Log stderr for debugging (append mode)
+            # Log stderr for debugging (append mode with thread-safe locking)
             try:
-                with open(debug_log_path, 'a') as f:
-                    f.write(f"{domain}: {line}\n")
+                with _debug_log_lock:
+                    with open(debug_log_path, 'a') as f:
+                        f.write(f"{domain}: {line}\n")
             except Exception:
                 pass
 
@@ -320,8 +344,8 @@ class SpiderFootScanner:
                         except Exception:
                             pass
 
-            # Wait for process to complete
-            process.wait(timeout=1800)
+            # Wait for process to complete (use configured timeout)
+            process.wait(timeout=self.timeout_seconds)
             stderr_thread.join(timeout=5)
 
             # Check results
@@ -350,7 +374,8 @@ class SpiderFootScanner:
                 process.kill()
             except Exception:
                 pass
-            return False, "Scan timed out after 30 minutes", None
+            timeout_min = self.timeout_seconds // 60
+            return False, f"Scan timed out after {timeout_min} minutes", None
         except Exception as e:
             return False, f"Scan error: {str(e)}", None
 

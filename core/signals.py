@@ -52,10 +52,10 @@ SMOKING_GUN_PATTERNS = {
     # Google Analytics / Tag Manager
     'google_analytics': {
         'patterns': [
-            r'UA-\d{4,10}-\d{1,4}',           # Universal Analytics
-            r'G-[A-Z0-9]{10,12}',              # GA4
-            r'GTM-[A-Z0-9]{6,8}',              # Tag Manager
-            r'GT-[A-Z0-9]{6,12}',              # Google Tag
+            r'\bUA-\d{4,10}-\d{1,4}\b',        # Universal Analytics (with word boundaries)
+            r'\bG-[A-Z0-9]{10,12}\b',          # GA4
+            r'\bGTM-[A-Z0-9]{6,8}\b',          # Tag Manager
+            r'\bGT-[A-Z0-9]{6,12}\b',          # Google Tag
         ],
         'module': 'sfp_webanalytics',
         'description': 'Google Analytics/Tag Manager ID'
@@ -64,8 +64,8 @@ SMOKING_GUN_PATTERNS = {
     # Google AdSense
     'adsense': {
         'patterns': [
-            r'pub-\d{10,20}',                  # AdSense Publisher ID
-            r'ca-pub-\d{10,20}',               # AdSense with prefix
+            r'\bpub-\d{10,20}\b',              # AdSense Publisher ID (with word boundaries)
+            r'\bca-pub-\d{10,20}\b',           # AdSense with prefix
         ],
         'module': 'sfp_webanalytics',
         'description': 'Google AdSense Publisher ID'
@@ -87,7 +87,7 @@ SMOKING_GUN_PATTERNS = {
         'patterns': [
             r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}',
         ],
-        'module': 'sfp_email',
+        'module': None,  # Match ALL modules - emails appear in sfp_email, sfp_whois, sfp_spider, etc.
         'description': 'Email Address',
         'exclude_patterns': [
             # Free email providers
@@ -282,12 +282,12 @@ STRONG_SIGNAL_PATTERNS = {
         'description': 'IP Address'
     },
 
-    # Crypto addresses
+    # Crypto addresses (already have word boundaries, adding length validation)
     'crypto_address': {
         'patterns': [
-            r'\b[13][a-km-zA-HJ-NP-Z1-9]{25,34}\b',      # Bitcoin
-            r'\b0x[a-fA-F0-9]{40}\b',                     # Ethereum
-            r'\bbc1[a-zA-HJ-NP-Z0-9]{39,59}\b',          # Bech32 Bitcoin
+            r'\b[13][a-km-zA-HJ-NP-Z1-9]{25,34}\b',      # Bitcoin (26-35 chars total)
+            r'\b0x[a-fA-F0-9]{40}\b',                     # Ethereum (42 chars total)
+            r'\bbc1[a-zA-HJ-NP-Z0-9]{39,59}\b',          # Bech32 Bitcoin (42-62 chars)
         ],
         'module': 'sfp_spider',
         'description': 'Cryptocurrency Address'
@@ -376,13 +376,17 @@ class SignalExtractor:
 
         # Check smoking gun patterns
         for signal_type, config in self.smoking_gun_compiled.items():
-            # Skip module check for CLI format (no module info) - match on data patterns only
-            if module and module != 'cli_scan' and config['module'] != module:
+            # Skip module check if:
+            # - config['module'] is None (match any module - e.g., emails appear in many modules)
+            # - CLI format (no module info)
+            # - Module matches expected
+            if config['module'] and module and module != 'cli_scan' and config['module'] != module:
                 continue
 
             for pattern in config['patterns']:
                 matches = pattern.findall(data)
-                for match in matches:
+                # Limit matches per field to prevent ReDoS and memory exhaustion
+                for match in matches[:100]:
                     value = match if isinstance(match, str) else match[0] if match else data
 
                     # Check exclusions
@@ -405,13 +409,17 @@ class SignalExtractor:
 
         # Check strong signal patterns
         for signal_type, config in self.strong_compiled.items():
-            # Skip module check for CLI format (no module info) - match on data patterns only
-            if module and module != 'cli_scan' and config['module'] != module:
+            # Skip module check if:
+            # - config['module'] is None (match any module)
+            # - CLI format (no module info)
+            # - Module matches expected
+            if config['module'] and module and module != 'cli_scan' and config['module'] != module:
                 continue
 
             for pattern in config['patterns']:
                 matches = pattern.findall(data)
-                for match in matches:
+                # Limit matches per field to prevent ReDoS and memory exhaustion
+                for match in matches[:100]:
                     value = match if isinstance(match, str) else match[0] if match else data
 
                     # Check exclusions
@@ -441,9 +449,19 @@ class SignalExtractor:
         Returns:
             Dict mapping (signal_type, value) -> Signal with all domains
         """
-        from tqdm import tqdm
+        # Optional tqdm import with fallback
+        try:
+            from tqdm import tqdm
+        except ImportError:
+            def tqdm(iterable, **kwargs):
+                return iterable
 
         all_signals = {}
+
+        # Validate data structure
+        if 'rows_by_domain' not in data:
+            print("  Warning: Invalid data structure - missing 'rows_by_domain'")
+            return all_signals
 
         # Flatten all rows
         all_rows = []

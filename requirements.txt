@@ -26,5 +26,20 @@ scipy>=1.10.0
 googlesearch-python>=1.2.0
 ddgs>=6.0.0
 
+# DNS resolution (for Signal//Noise Wildcard DNS Analyzer)
+dnspython>=2.4.0
+
+# HTTP requests (for certificate transparency and HTTP fingerprinting)
+requests>=2.28.0
+
 # CSV handling (built-in, listed for clarity)
 # csv - standard library
+
+# Interactive terminal menus (for domain review UI)
+simple-term-menu>=1.6.0
+
+# Rich terminal UI (for Gaming HUD interface)
+rich>=13.0.0
+
+# System monitoring (for CPU/MEM/DISK stats in HUD)
+psutil>=5.9.0

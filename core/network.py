@@ -117,7 +117,12 @@ class NetworkAnalyzer:
 
         Each shared signal creates edges between all domains that share it.
         """
-        from tqdm import tqdm
+        # Optional tqdm import with fallback
+        try:
+            from tqdm import tqdm
+        except ImportError:
+            def tqdm(iterable, **kwargs):
+                return iterable
 
         print("\n🕸️ Building domain connection network...")
 
@@ -254,12 +259,15 @@ class NetworkAnalyzer:
         # PageRank requires scipy - fall back to degree centrality if not available
         try:
             pagerank = nx.pagerank(self.graph, weight='weight')
-        except (ImportError, ModuleNotFoundError):
-            # scipy not installed - use degree centrality as fallback
+        except (ImportError, ModuleNotFoundError, Exception):
+            # scipy not installed or other error - use degree centrality as fallback
             print("  ⚠ scipy not installed, using degree centrality instead of PageRank")
             print("  💡 Install scipy for better results: pip install scipy")
             degree = dict(self.graph.degree(weight='weight'))
+            # Avoid division by zero: ensure max_degree is at least 1
             max_degree = max(degree.values()) if degree else 1
+            if max_degree == 0:
+                max_degree = 1
             pagerank = {node: deg / max_degree for node, deg in degree.items()}
 
         hubs = []
