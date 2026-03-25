@@ -129,7 +129,7 @@ def render_loadout_menu(
 
     # Categories with their tools
     categories = [
-        ("DISCOVERY & SCANNING", ["01", "02", "03", "04", "11"]),
+        ("DISCOVERY & SCANNING", ["01", "02", "D", "03", "04", "11"]),
         ("ANALYSIS", ["05", "06", "12"]),
     ]
 

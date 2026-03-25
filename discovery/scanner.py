@@ -16,7 +16,7 @@ from typing import Optional, Callable, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
-from .jobs import JobTracker, ScanJob, JobStatus
+from .jobs import JobTracker, ScanJob, JobStatus, sanitize_domain
 
 # Thread lock for debug log file writes
 _debug_log_lock = threading.Lock()
@@ -200,6 +200,10 @@ class SpiderFootScanner:
         import threading
         import io
 
+        # Validate domain before using in subprocess command
+        if not sanitize_domain(domain):
+            return False, f"Unsafe domain rejected: {domain}", None
+
         # Generate output filename
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_domain = domain.replace(".", "_")
@@ -353,6 +357,9 @@ class SpiderFootScanner:
 
             if stdout:
                 lines = stdout.split('\n')
+                # Strip BOM from first line if present
+                if lines and lines[0].startswith('\ufeff'):
+                    lines[0] = lines[0].lstrip('\ufeff')
                 has_data = len(lines) > 1 and not all(
                     l.startswith('Source,') or l.strip() == '' for l in lines
                 )

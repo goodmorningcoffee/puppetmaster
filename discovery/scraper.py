@@ -132,6 +132,14 @@ def is_valid_target(domain: str) -> bool:
     if not domain:
         return False
 
+    # RFC length limit
+    if len(domain) > 253:
+        return False
+
+    # Safe character validation
+    if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9.\-]*[a-zA-Z0-9]$', domain):
+        return False
+
     # Check against excluded domains
     if domain.lower() in EXCLUDED_DOMAINS:
         return False

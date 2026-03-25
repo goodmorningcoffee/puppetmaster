@@ -244,6 +244,7 @@ def map_hud_key_to_choice(key: str) -> str:
         "K3": "k3",
         "K4": "k4",
         "K5": "k5",
+        "D": "d",
         "Q": "q",
     }
 

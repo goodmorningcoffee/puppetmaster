@@ -8,11 +8,46 @@ All configs stored in JSON with atomic writes for safety.
 
 import json
 import os
+import re
 import threading
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Any
+
+# Validation patterns for worker hostnames and SSH usernames
+VALID_HOSTNAME = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9.\-]*[a-zA-Z0-9])?$')
+VALID_USERNAME = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_\-]*$')
+
+
+def validate_worker_input(hostname: str, username: str) -> None:
+    """
+    Validate hostname and username for shell safety.
+
+    Raises:
+        ValueError: If hostname or username contains invalid characters
+    """
+    hostname = hostname.strip()
+    username = username.strip()
+
+    if not hostname:
+        raise ValueError("Hostname cannot be empty")
+    if len(hostname) > 253:
+        raise ValueError(f"Hostname too long ({len(hostname)} chars, max 253)")
+    if not VALID_HOSTNAME.match(hostname):
+        raise ValueError(
+            f"Invalid hostname '{hostname}': only alphanumeric, dots, and hyphens allowed"
+        )
+
+    if not username:
+        raise ValueError("Username cannot be empty")
+    if len(username) > 32:
+        raise ValueError(f"Username too long ({len(username)} chars, max 32)")
+    if not VALID_USERNAME.match(username):
+        raise ValueError(
+            f"Invalid username '{username}': must start with letter/underscore, "
+            "only alphanumeric, underscores, and hyphens allowed"
+        )
 
 
 @dataclass
@@ -269,6 +304,9 @@ class DistributedConfigManager:
         Raises:
             ValueError: If worker with same hostname already exists
         """
+        # Validate hostname and username for shell safety
+        validate_worker_input(hostname, username)
+
         # Check for duplicates
         for worker in self.config.workers:
             if worker.hostname.lower() == hostname.lower():
@@ -354,6 +392,15 @@ class DistributedConfigManager:
         if not worker:
             return False
 
+        # Validate hostname/username if being changed
+        new_hostname = kwargs.get('hostname', worker.hostname)
+        new_username = kwargs.get('username', worker.username)
+        if 'hostname' in kwargs or 'username' in kwargs:
+            validate_worker_input(
+                new_hostname if isinstance(new_hostname, str) else worker.hostname,
+                new_username if isinstance(new_username, str) else worker.username
+            )
+
         for key, value in kwargs.items():
             if hasattr(worker, key):
                 setattr(worker, key, value)
@@ -400,6 +447,8 @@ class DistributedConfigManager:
         for worker, new_hostname in zip(workers, new_hostnames):
             old_hostname = worker.hostname
             new_hostname = new_hostname.strip()
+            # Validate new hostname before applying
+            validate_worker_input(new_hostname, worker.username)
             worker.hostname = new_hostname
             changes.append((
                 worker.nickname or worker.hostname,

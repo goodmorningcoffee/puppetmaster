@@ -329,8 +329,13 @@ def upload_files(host, user, key_path, local_dir, remote_dir):
         "--exclude=.venv",
         "--exclude=venv",
         "--exclude=*.pem",           # CRITICAL: Never upload private keys!
+        "--exclude=*.PEM",           # CRITICAL: Never upload private keys (uppercase)!
+        "--exclude=*.Pem",           # CRITICAL: Never upload private keys (mixed case)!
         "--exclude=*.key",           # CRITICAL: Never upload private keys!
+        "--exclude=*.KEY",           # CRITICAL: Never upload private keys (uppercase)!
+        "--exclude=*.Key",           # CRITICAL: Never upload private keys (mixed case)!
         "--exclude=*.ppk",           # CRITICAL: Never upload private keys!
+        "--exclude=*.PPK",           # CRITICAL: Never upload private keys (uppercase)!
         "--exclude=*credentials*",   # CRITICAL: Never upload credentials!
         "--exclude=.aws",            # CRITICAL: Never upload AWS config!
         "--exclude=.env",            # CRITICAL: Never upload env files!
@@ -392,27 +397,60 @@ def upload_files(host, user, key_path, local_dir, remote_dir):
 
             # For directories, use tar to properly exclude venv/node_modules
             if os.path.isdir(item_path):
-                # Create tar with exclusions, pipe through ssh
-                # Use shlex.quote for all user-supplied values to prevent shell injection
-                excludes = ' '.join([f"--exclude={shlex.quote(s)}" for s in SKIP_ITEMS])
-                tar_cmd = (
-                    f"tar -czf - -C {shlex.quote(local_dir)} {excludes} {shlex.quote(item)} | "
-                    f"ssh -i {shlex.quote(key_path)} -o StrictHostKeyChecking=accept-new "
-                    f"{shlex.quote(user)}@{shlex.quote(host)} "
-                    f"'cd {shlex.quote(remote_dest)} && tar -xzf -'"
-                )
+                # Create tar with exclusions, pipe through ssh using two-process Popen
+                # Avoids shell=True for security
+                tar_args = ["tar", "-czf", "-", "-C", local_dir]
+                for s in SKIP_ITEMS:
+                    tar_args.append(f"--exclude={s}")
+                tar_args.append(item)
+
+                ssh_args = [
+                    "ssh", "-i", key_path,
+                    "-o", "StrictHostKeyChecking=accept-new",
+                    f"{user}@{host}",
+                    f"cd {shlex.quote(remote_dest)} && tar -xzf -"
+                ]
 
                 try:
-                    result = subprocess.run(tar_cmd, shell=True, capture_output=True, text=True, timeout=timeout)
-                    if result.returncode == 0:
+                    tar_proc = subprocess.Popen(
+                        tar_args,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE
+                    )
+                    ssh_proc = subprocess.Popen(
+                        ssh_args,
+                        stdin=tar_proc.stdout,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE
+                    )
+                    # Allow tar_proc to receive SIGPIPE if ssh_proc exits
+                    tar_proc.stdout.close()
+
+                    ssh_stdout, ssh_stderr = ssh_proc.communicate(timeout=timeout)
+                    tar_proc.wait(timeout=10)
+
+                    if tar_proc.returncode != 0:
+                        tar_stderr = tar_proc.stderr.read() if tar_proc.stderr else b""
+                        error_msg = tar_stderr.decode(errors='replace').strip()[:80] if tar_stderr else "tar failed"
+                        print(f"  {Colors.RED}✗{Colors.RESET} {item}: {error_msg}")
+                        failed_count += 1
+                        failed_items.append(item)
+                        continue
+
+                    if ssh_proc.returncode == 0:
                         print(f"  {Colors.GREEN}✓{Colors.RESET} {item}")
                         uploaded_count += 1
                     else:
-                        error_msg = result.stderr.strip()[:80] if result.stderr else "Unknown error"
+                        error_msg = ssh_stderr.decode(errors='replace').strip()[:80] if ssh_stderr else "Unknown error"
                         print(f"  {Colors.RED}✗{Colors.RESET} {item}: {error_msg}")
                         failed_count += 1
                         failed_items.append(item)
                 except subprocess.TimeoutExpired:
+                    for p in (tar_proc, ssh_proc):
+                        try:
+                            p.kill()
+                        except Exception:
+                            pass
                     print(f"  {Colors.RED}✗{Colors.RESET} {item}: Timeout after {timeout}s")
                     failed_count += 1
                     failed_items.append(item)

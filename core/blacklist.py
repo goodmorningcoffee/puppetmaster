@@ -283,8 +283,8 @@ def load_user_blacklist() -> Set[str]:
                     line = line.strip().lower()
                     if line and not line.startswith('#'):
                         user_domains.add(line)
-        except Exception:
-            pass
+        except (IOError, OSError) as e:
+            print(f"  Warning: {e}")
 
     return user_domains
 
@@ -299,7 +299,8 @@ def save_user_blacklist(domains: Set[str]) -> bool:
             for domain in sorted(domains):
                 f.write(f"{domain}\n")
         return True
-    except Exception:
+    except (IOError, OSError) as e:
+        print(f"  Warning: {e}")
         return False
 
 
@@ -410,7 +411,8 @@ def reset_user_blacklist() -> bool:
         if os.path.exists(USER_BLACKLIST_FILE):
             os.remove(USER_BLACKLIST_FILE)
         return True
-    except Exception:
+    except (IOError, OSError) as e:
+        print(f"  Warning: {e}")
         return False
 
 
@@ -424,7 +426,8 @@ def export_blacklist(filepath: str) -> bool:
             for domain in sorted(blacklist):
                 f.write(f"{domain}\n")
         return True
-    except Exception:
+    except (IOError, OSError) as e:
+        print(f"  Warning: {e}")
         return False
 
 
@@ -454,8 +457,8 @@ def import_blacklist(filepath: str) -> Tuple[int, int]:
 
             save_user_blacklist(user_domains)
 
-    except Exception:
-        pass
+    except (IOError, OSError) as e:
+        print(f"  Warning: {e}")
 
     return added, skipped
 

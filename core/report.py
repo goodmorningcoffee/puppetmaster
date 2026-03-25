@@ -40,9 +40,10 @@ def sanitize_csv_value(value):
     # Characters that can trigger formula interpretation in spreadsheets
     dangerous_chars = ('=', '+', '-', '@', '\t', '\r', '\n')
 
-    # If value starts with dangerous character, prefix with single quote
-    # This is the standard mitigation recommended by OWASP
-    if value and value[0] in dangerous_chars:
+    # Check if value starts with dangerous character (even after leading whitespace)
+    # This catches " =formula" attacks while preserving intentional leading spaces
+    stripped = value.lstrip()
+    if stripped and stripped[0] in dangerous_chars:
         return "'" + value
 
     return value
@@ -261,6 +262,8 @@ This analysis uses a **binary signal classification** approach:
 
     # Write the file
     output_path = output_dir / "executive_summary.md"
+    if output_path.exists():
+        print(f"  Note: Overwriting {output_path.name}")
     output_path.write_text(md)
     print(f"✓ Executive summary: {output_path}")
 
@@ -274,9 +277,11 @@ This analysis uses a **binary signal classification** approach:
 def export_smoking_guns(output_dir: Path, analyzer: NetworkAnalyzer):
     """Export all smoking gun connections to CSV"""
     filepath = output_dir / "smoking_guns.csv"
+    if filepath.exists():
+        print(f"  Note: Overwriting {filepath.name}")
 
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, quoting=csv.QUOTE_ALL)
         writer.writerow([
             'Domain 1', 'Domain 2', 'Signal Type', 'Signal Value',
             'Description', 'Source Module'
@@ -300,9 +305,11 @@ def export_smoking_guns(output_dir: Path, analyzer: NetworkAnalyzer):
 def export_clusters(output_dir: Path, clusters: List[DomainCluster]):
     """Export cluster analysis to CSV"""
     filepath = output_dir / "clusters.csv"
+    if filepath.exists():
+        print(f"  Note: Overwriting {filepath.name}")
 
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, quoting=csv.QUOTE_ALL)
         writer.writerow([
             'Cluster ID', 'Confidence', 'Size', 'Hub Domain',
             'Smoking Gun Count', 'Domains'
@@ -325,9 +332,11 @@ def export_clusters(output_dir: Path, clusters: List[DomainCluster]):
 def export_hubs(output_dir: Path, hubs: List[HubAnalysis]):
     """Export hub analysis to CSV"""
     filepath = output_dir / "hub_analysis.csv"
+    if filepath.exists():
+        print(f"  Note: Overwriting {filepath.name}")
 
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, quoting=csv.QUOTE_ALL)
         writer.writerow([
             'Domain', 'Is Potential C2', 'Total Connections',
             'Confirmed Connections', 'Likely Connections',
@@ -353,9 +362,11 @@ def export_hubs(output_dir: Path, hubs: List[HubAnalysis]):
 def export_all_connections(output_dir: Path, analyzer: NetworkAnalyzer):
     """Export all connections to CSV"""
     filepath = output_dir / "all_connections.csv"
+    if filepath.exists():
+        print(f"  Note: Overwriting {filepath.name}")
 
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, quoting=csv.QUOTE_ALL)
         writer.writerow([
             'Domain 1', 'Domain 2', 'Confidence', 'Total Signals',
             'Smoking Guns', 'Strong Signals', 'Evidence Summary'
@@ -390,9 +401,11 @@ def export_all_connections(output_dir: Path, analyzer: NetworkAnalyzer):
 def export_signals(output_dir: Path, signals: Dict):
     """Export all signals to CSV"""
     filepath = output_dir / "signals.csv"
+    if filepath.exists():
+        print(f"  Note: Overwriting {filepath.name}")
 
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, quoting=csv.QUOTE_ALL)
         writer.writerow([
             'Signal Type', 'Tier', 'Value', 'Domain Count',
             'Domains', 'Description'
@@ -412,7 +425,7 @@ def export_signals(output_dir: Path, signals: Dict):
             writer.writerow([
                 sanitize_csv_value(signal.signal_type),
                 sanitize_csv_value(signal.tier.value),
-                sanitize_csv_value(signal.value[:200]),  # Truncate long values
+                sanitize_csv_value(signal.value[:200] + ("..." if len(signal.value) > 200 else "")),
                 len(signal.domains),
                 sanitize_csv_value("; ".join(sorted(signal.domains)[:20])),
                 sanitize_csv_value(signal.description)

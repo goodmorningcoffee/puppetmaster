@@ -10,6 +10,7 @@ Provides integration points for puppetmaster.py:
 import os
 import sys
 import re
+import threading
 from typing import Optional, Tuple, Callable
 
 
@@ -139,22 +140,26 @@ except ImportError:
 # Global state
 _kali_mode_enabled = False
 _current_scan_mode = ScanMode.STANDARD
+_mode_lock = threading.Lock()
 
 
 def is_enhanced_mode() -> bool:
     """Check if enhanced Kali mode is enabled"""
-    return _kali_mode_enabled
+    with _mode_lock:
+        return _kali_mode_enabled
 
 
 def get_current_mode() -> ScanMode:
     """Get current scan mode"""
-    return _current_scan_mode
+    with _mode_lock:
+        return _current_scan_mode
 
 
 def set_current_mode(mode: ScanMode):
     """Set current scan mode"""
     global _current_scan_mode
-    _current_scan_mode = mode
+    with _mode_lock:
+        _current_scan_mode = mode
 
 
 def kali_startup_check(print_func: Callable = print) -> Tuple[bool, OSInfo]:

@@ -163,8 +163,8 @@ class DiscoveryAggregator:
                             result.tools_succeeded += 1
 
                             # Merge results
-                            result.domains.update(tool_result.domains)
-                            result.subdomains.update(tool_result.subdomains)
+                            result.domains.update(d.lower() for d in tool_result.domains)
+                            result.subdomains.update(d.lower() for d in tool_result.subdomains)
                             result.emails.update(tool_result.emails)
                             result.ips.update(tool_result.ips)
                         else:
@@ -184,8 +184,8 @@ class DiscoveryAggregator:
                     result.tools_succeeded += 1
 
                     # Merge results
-                    result.domains.update(tool_result.domains)
-                    result.subdomains.update(tool_result.subdomains)
+                    result.domains.update(d.lower() for d in tool_result.domains)
+                    result.subdomains.update(d.lower() for d in tool_result.subdomains)
                     result.emails.update(tool_result.emails)
                     result.ips.update(tool_result.ips)
                 else:
@@ -215,8 +215,8 @@ class DiscoveryAggregator:
         if include_seed and result.target not in domains:
             domains.insert(0, result.target)
 
-        # Deduplicate and sort
-        domains = sorted(set(domains))
+        # Deduplicate, normalize, and sort
+        domains = sorted(set(d.lower() for d in domains))
 
         # Write to file
         with open(output_path, 'w') as f:

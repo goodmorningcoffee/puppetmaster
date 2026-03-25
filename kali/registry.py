@@ -6,6 +6,7 @@ This is the central registry that other modules query to determine what's possib
 """
 
 import shutil
+import threading
 from dataclasses import dataclass, field
 from typing import Dict, List, Set, Optional
 from enum import Enum
@@ -40,6 +41,7 @@ class ToolRegistry:
     """
 
     _instance = None
+    _instance_lock = threading.Lock()
 
     def __init__(self):
         self.os_info: OSInfo = get_os_info()
@@ -48,9 +50,11 @@ class ToolRegistry:
 
     @classmethod
     def get_instance(cls) -> 'ToolRegistry':
-        """Get singleton instance"""
+        """Get singleton instance (thread-safe double-checked locking)"""
         if cls._instance is None:
-            cls._instance = ToolRegistry()
+            with cls._instance_lock:
+                if cls._instance is None:
+                    cls._instance = ToolRegistry()
         return cls._instance
 
     def scan(self, force: bool = False) -> None:

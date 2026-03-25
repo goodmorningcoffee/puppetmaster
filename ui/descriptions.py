@@ -24,6 +24,7 @@ MENU_ITEMS = [
     # DISCOVERY & SCANNING
     ("01", "DISCOVERY & SCANNING"),
     ("02", "DISCOVERY & SCANNING"),
+    ("D", "DISCOVERY & SCANNING"),
     ("03", "DISCOVERY & SCANNING"),
     ("04", "DISCOVERY & SCANNING"),
     # ANALYSIS
@@ -89,6 +90,27 @@ TOOL_DESCRIPTIONS = {
             "Add to pending queue for scanning",
         ],
         next_step="Use [3] to scan imported domains with SpiderFoot",
+        category="DISCOVERY & SCANNING",
+    ),
+
+    "D": ToolDescription(
+        key="D",
+        emoji="🗑️",
+        short_name="Delete/Modify domain lists",
+        title="DOMAIN LIST MANAGER",
+        subtitle="Delete or Modify Saved Domain Lists",
+        description=[
+            "Manage the .txt domain list files saved in the domain_lists/",
+            "directory. Delete individual files or clear them all to free",
+            "up space and keep your workspace organized.",
+        ],
+        objectives=[
+            "View all saved domain list files",
+            "Select specific files to delete",
+            "Delete all domain list files at once",
+            "See domain counts and modification dates",
+        ],
+        next_step="Use [1] to scrape new domains or [2] to load a file",
         category="DISCOVERY & SCANNING",
     ),
 

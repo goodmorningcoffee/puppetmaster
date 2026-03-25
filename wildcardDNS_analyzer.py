@@ -873,7 +873,14 @@ def _quick_check_dns(domain: str, resolver: dns.resolver.Resolver) -> Dict:
 
 def _quick_check_socket(domain: str, timeout: float) -> Dict:
     """Quick wildcard check using socket (fallback)"""
-    socket.setdefaulttimeout(timeout)
+    # NOTE: socket.setdefaulttimeout() is process-global and NOT thread-safe.
+    # It affects all sockets created after this call in any thread.
+    # Per-socket timeouts via sock.settimeout() would be safer but require
+    # refactoring away from socket.gethostbyname() to lower-level APIs.
+    try:
+        socket.setdefaulttimeout(timeout)
+    except Exception:
+        pass  # Non-fatal: proceed with existing default timeout
     test_responses = []
 
     for _ in range(3):
@@ -1241,7 +1248,8 @@ class CertificateAnalyzer:
             ui.print_info(f"Attempt {attempt + 1}/{retries}...")
 
             try:
-                url = self.crt_sh_url.format(domain=f"%.{domain}")
+                from urllib.parse import quote
+                url = self.crt_sh_url.format(domain=quote(f"%.{domain}", safe=''))
                 response = self.session.get(url, timeout=30)
 
                 if response.status_code == 200:

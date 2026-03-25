@@ -125,8 +125,8 @@ SMOKING_GUN_PATTERNS = {
             r'@digitalocean\.com$', r'@linode\.com$', r'@vultr\.com$',
             r'@ovh\.', r'@hetzner\.', r'@scaleway\.com$',
 
-            # Hosting providers
-            r'@godaddy\.com$', r'@hostgator\.com$', r'@bluehost\.com$',
+            # Hosting providers (godaddy already listed under registrars)
+            r'@hostgator\.com$', r'@bluehost\.com$',
             r'@siteground\.com$', r'@inmotionhosting\.com$',
             r'@dreamhost\.com$', r'@a2hosting\.com$',
             r'@secureserver\.net$', r'@idcloudhost\.',
@@ -178,23 +178,19 @@ SMOKING_GUN_PATTERNS = {
             r'hexonet\.net$', r'kalengo\.com$',
             r'hostpro\.ua$', r'actaprise\.com$',
             r'sigelsberg\.com$', r'media\.us$',
-            r'advania\.com$', r'\.hk$',
-            r'internetx\.de$', r'url\.com\.tw$',  # Fix subdomain matching
-
-            # Spam protection services
-            r'o-w-o\.info$',
+            r'advania\.com$', r'@.*registrar.*\.hk$',
 
             # Generic TLD/registry contacts
             r'-admin@', r'-registrant@', r'-tech@',
-            r'registry@', r'registrar@', r'tld@',
+            r'tld@',
         ]
     },
 
     # SSL Certificate fingerprints (non-wildcard, non-LE)
     'ssl_fingerprint': {
         'patterns': [
-            r'[A-Fa-f0-9]{40}',  # SHA1 fingerprint
-            r'[A-Fa-f0-9]{64}',  # SHA256 fingerprint
+            r'\b[A-Fa-f0-9]{40}\b',  # SHA1 fingerprint
+            r'\b[A-Fa-f0-9]{64}\b',  # SHA256 fingerprint
         ],
         'module': 'sfp_crt',
         'description': 'SSL Certificate Fingerprint'
@@ -282,6 +278,7 @@ STRONG_SIGNAL_PATTERNS = {
         'description': 'IP Address'
     },
 
+    # NOTE: Heuristic patterns — may produce false positives on base58/hex strings
     # Crypto addresses (already have word boundaries, adding length validation)
     'crypto_address': {
         'patterns': [

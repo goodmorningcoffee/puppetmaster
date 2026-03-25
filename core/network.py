@@ -160,7 +160,7 @@ class NetworkAnalyzer:
             self.connections[(d1, d2)] = conn
 
             # Add edge to graph with weight based on confidence
-            weight = len(sig_data['smoking']) * 10 + len(sig_data['strong']) * 3 + len(sig_data['weak'])
+            weight = len(sig_data['smoking']) * 10 + len(sig_data['strong']) * 5 + len(sig_data['weak'])
             self.graph.add_edge(d1, d2, weight=weight, connection=conn)
 
         # Summary
@@ -254,14 +254,18 @@ class NetworkAnalyzer:
             return []
 
         # Calculate centrality measures
-        betweenness = nx.betweenness_centrality(self.graph, weight='weight')
+        n = self.graph.number_of_nodes()
+        if n > 5000:
+            betweenness = nx.betweenness_centrality(self.graph, weight='weight', k=min(500, n))
+        else:
+            betweenness = nx.betweenness_centrality(self.graph, weight='weight')
 
         # PageRank requires scipy - fall back to degree centrality if not available
         try:
             pagerank = nx.pagerank(self.graph, weight='weight')
-        except (ImportError, ModuleNotFoundError, Exception):
+        except Exception as e:
             # scipy not installed or other error - use degree centrality as fallback
-            print("  ⚠ scipy not installed, using degree centrality instead of PageRank")
+            print(f"  ⚠ PageRank failed ({e}), using degree centrality as fallback")
             print("  💡 Install scipy for better results: pip install scipy")
             degree = dict(self.graph.degree(weight='weight'))
             # Avoid division by zero: ensure max_degree is at least 1

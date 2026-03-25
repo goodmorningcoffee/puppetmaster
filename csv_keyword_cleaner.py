@@ -117,25 +117,35 @@ def clean_csv_file(csv_path, matches, dry_run=True):
     print(f"\n  Creating backup: {backup_path.name}")
     os.rename(csv_path, backup_path)
 
-    # Write cleaned file
+    # Write cleaned file to temp path first (atomic write)
+    tmp_path = Path(str(csv_path) + '.tmp')
     print(f"  Writing cleaned file: {csv_path.name}")
     rows_written = 0
     rows_deleted = 0
 
-    with open(backup_path, 'r', encoding='utf-8', errors='ignore') as infile:
-        with open(csv_path, 'w', encoding='utf-8', newline='') as outfile:
-            reader = csv.reader(infile)
-            writer = csv.writer(outfile)
+    try:
+        with open(backup_path, 'r', encoding='utf-8', errors='ignore') as infile:
+            with open(tmp_path, 'w', encoding='utf-8', newline='') as outfile:
+                reader = csv.reader(infile)
+                writer = csv.writer(outfile)
 
-            for row_num, row in enumerate(reader, 1):
-                if row_num in rows_to_delete:
-                    rows_deleted += 1
-                else:
-                    writer.writerow(row)
-                    rows_written += 1
+                for row_num, row in enumerate(reader, 1):
+                    if row_num in rows_to_delete:
+                        rows_deleted += 1
+                    else:
+                        writer.writerow(row)
+                        rows_written += 1
 
-                if row_num % 100000 == 0:
-                    print(f"  ... processed {row_num:,} rows", end='\r')
+                    if row_num % 100000 == 0:
+                        print(f"  ... processed {row_num:,} rows", end='\r')
+
+        # Atomic rename: only replace original after successful write
+        os.rename(tmp_path, csv_path)
+    except Exception:
+        # Clean up temp file on failure
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
 
     print(f"  ✓ Wrote {rows_written:,} rows, deleted {rows_deleted:,} rows")
 

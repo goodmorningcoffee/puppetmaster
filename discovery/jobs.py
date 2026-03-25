@@ -64,6 +64,10 @@ def sanitize_domain(domain: str) -> Optional[str]:
     if '..' in domain:
         return None
 
+    # RFC 1035 length limit
+    if len(domain) > 253:
+        return None
+
     return domain
 
 
@@ -169,6 +173,14 @@ class JobTracker:
                         }
                 except json.JSONDecodeError as e:
                     print(f"Warning: State file corrupted, starting fresh: {e}")
+                    # Back up corrupted file before deletion
+                    import shutil
+                    backup = self.state_file.with_suffix('.json.corrupted')
+                    try:
+                        shutil.copy2(self.state_file, backup)
+                        print(f"  Warning: Backed up corrupted state to {backup.name}")
+                    except OSError:
+                        pass
                     # Delete corrupted file
                     try:
                         self.state_file.unlink()

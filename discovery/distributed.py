@@ -68,6 +68,26 @@ SCP_TIMEOUT = 600          # 10 minutes for file transfers
 MAX_RETRIES = 3
 RETRY_DELAY = 5  # seconds
 
+# DNS/network error patterns for retry detection during setup
+# These are errors from remote commands (git, apt, pip) when DNS is broken on the EC2 instance
+NETWORK_ERROR_PATTERNS = [
+    "could not resolve host",
+    "temporary failure resolving",
+    "name or service not known",
+    "failure in name resolution",
+]
+NETWORK_RETRY_DELAY = 30  # seconds between retries for DNS errors
+
+
+def _expand_remote_home(path: str, username: str) -> str:
+    """Safely expand ~ in remote paths. Only expands a leading ~/."""
+    if path.startswith("~/"):
+        return f"/home/{username}" + path[1:]
+    elif path == "~":
+        return f"/home/{username}"
+    return path
+NETWORK_MAX_RETRIES = 3   # max attempts for network-dependent steps
+
 # SpiderFoot intensity presets (modules)
 INTENSITY_PRESETS = {
     'all': None,  # All modules (default)
@@ -705,6 +725,10 @@ class SSHExecutor:
         if not re.match(r'^[\w\*\?\.\-]+$', file_pattern):
             return False, f"Invalid file pattern: {file_pattern}", 0
 
+        # Validate remote_dir for shell safety
+        if not re.match(r'^[\w/.\-~]+$', remote_dir):
+            return False, f"Invalid remote directory: {remote_dir}", 0
+
         os.makedirs(local_dir, exist_ok=True)
 
         # First, list files to get count
@@ -1282,7 +1306,7 @@ class SpiderFootInstaller:
         Returns:
             Tuple of (installed, version_or_error)
         """
-        install_dir = install_dir.replace("~", f"/home/{username}")
+        install_dir = _expand_remote_home(install_dir, username)
 
         # Check if sf.py exists
         check_result = self.ssh.execute(
@@ -1304,6 +1328,12 @@ class SpiderFootInstaller:
         version = version_result.stdout.strip() or "installed"
         return True, version
 
+    @staticmethod
+    def _is_network_error(result: 'SSHResult') -> bool:
+        """Check if an SSHResult failure is due to a DNS/network resolution error."""
+        error_text = ((result.stderr or "") + " " + (result.stdout or "")).lower()
+        return any(pattern in error_text for pattern in NETWORK_ERROR_PATTERNS)
+
     def install_apt_updates(
         self,
         hostname: str,
@@ -1324,13 +1354,22 @@ class SpiderFootInstaller:
         if on_progress:
             on_progress("Running apt update...")
 
-        # apt update
-        update_result = self.ssh.execute(
-            hostname, username,
-            "sudo apt update -qq",
-            timeout=300,
-            retries=2
-        )
+        # apt update (with DNS retry)
+        for attempt in range(NETWORK_MAX_RETRIES):
+            update_result = self.ssh.execute(
+                hostname, username,
+                "sudo apt update -qq",
+                timeout=300,
+                retries=2
+            )
+            if update_result.success:
+                break
+            if attempt < NETWORK_MAX_RETRIES - 1 and self._is_network_error(update_result):
+                if on_progress:
+                    on_progress(f"apt update - DNS error, retrying in {NETWORK_RETRY_DELAY}s (attempt {attempt + 1}/{NETWORK_MAX_RETRIES})...")
+                time.sleep(NETWORK_RETRY_DELAY)
+                continue
+            break
 
         if not update_result.success:
             return False, f"apt update failed: {update_result.stderr}"
@@ -1338,13 +1377,22 @@ class SpiderFootInstaller:
         if on_progress:
             on_progress("Running apt full-upgrade (this may take a while)...")
 
-        # apt full-upgrade
-        upgrade_result = self.ssh.execute(
-            hostname, username,
-            "sudo DEBIAN_FRONTEND=noninteractive apt full-upgrade -y -qq",
-            timeout=600,
-            retries=1
-        )
+        # apt full-upgrade (with DNS retry)
+        for attempt in range(NETWORK_MAX_RETRIES):
+            upgrade_result = self.ssh.execute(
+                hostname, username,
+                "sudo DEBIAN_FRONTEND=noninteractive apt full-upgrade -y -qq",
+                timeout=600,
+                retries=2
+            )
+            if upgrade_result.success:
+                break
+            if attempt < NETWORK_MAX_RETRIES - 1 and self._is_network_error(upgrade_result):
+                if on_progress:
+                    on_progress(f"apt upgrade - DNS error, retrying in {NETWORK_RETRY_DELAY}s (attempt {attempt + 1}/{NETWORK_MAX_RETRIES})...")
+                time.sleep(NETWORK_RETRY_DELAY)
+                continue
+            break
 
         if not upgrade_result.success:
             return False, f"apt upgrade failed: {upgrade_result.stderr}"
@@ -1366,17 +1414,21 @@ class SpiderFootInstaller:
         Returns:
             Tuple of (success, message)
         """
-        result = self.ssh.execute(
-            hostname, username,
-            "sudo apt install -y -qq tmux",
-            timeout=120,
-            retries=2
-        )
+        for attempt in range(NETWORK_MAX_RETRIES):
+            result = self.ssh.execute(
+                hostname, username,
+                "sudo apt install -y -qq tmux",
+                timeout=120,
+                retries=2
+            )
+            if result.success:
+                return True, "tmux installed"
+            if attempt < NETWORK_MAX_RETRIES - 1 and self._is_network_error(result):
+                time.sleep(NETWORK_RETRY_DELAY)
+                continue
+            break
 
-        if result.success:
-            return True, "tmux installed"
-        else:
-            return False, f"Failed to install tmux: {result.stderr}"
+        return False, f"Failed to install tmux: {result.stderr}"
 
     def install_spiderfoot(
         self,
@@ -1399,15 +1451,16 @@ class SpiderFootInstaller:
         Returns:
             Tuple of (success, message)
         """
-        install_dir = install_dir.replace("~", f"/home/{username}")
-        work_dir = work_dir.replace("~", f"/home/{username}")
+        # Safely expand ~ to home directory (only leading ~/)
+        install_dir = _expand_remote_home(install_dir, username)
+        work_dir = _expand_remote_home(work_dir, username)
 
         steps = [
             ("Installing dependencies",
              "sudo apt install -y -qq git python3-venv python3-pip libxml2-dev libxslt1-dev python3-dev build-essential"),
 
             ("Wiping old installation",
-             f"rm -rf {install_dir} {work_dir} ~/.spiderfoot"),
+             f"rm -rf {shlex.quote(install_dir)} {shlex.quote(work_dir)} ~/.spiderfoot"),
 
             ("Cloning fresh SpiderFoot",
              f"git clone --depth 1 --branch {SPIDERFOOT_VERSION} {SPIDERFOOT_REPO} {shlex.quote(install_dir)}"),
@@ -1463,18 +1516,39 @@ class SpiderFootInstaller:
             "Verifying installation": 60,
         }
 
+        # Steps that require network access and may fail due to transient DNS
+        network_steps = {
+            "Installing dependencies",
+            "Cloning fresh SpiderFoot",
+            "Upgrading pip and installing pip-tools",
+            "Installing lxml binary wheel",
+            "Installing PyYAML binary wheel",
+            "Generating hash-pinned requirements",
+            "Installing Python dependencies with hash verification",
+        }
+
         for step_name, command in steps:
             if on_progress:
                 on_progress(step_name)
 
             timeout = step_timeouts.get(step_name, 300)
+            max_attempts = NETWORK_MAX_RETRIES if step_name in network_steps else 1
 
-            result = self.ssh.execute(
-                hostname, username,
-                command,
-                timeout=timeout,
-                retries=2
-            )
+            for attempt in range(max_attempts):
+                result = self.ssh.execute(
+                    hostname, username,
+                    command,
+                    timeout=timeout,
+                    retries=2
+                )
+                if result.success:
+                    break
+                if attempt < max_attempts - 1 and self._is_network_error(result):
+                    if on_progress:
+                        on_progress(f"{step_name} - DNS error, retrying in {NETWORK_RETRY_DELAY}s (attempt {attempt + 1}/{max_attempts})...")
+                    time.sleep(NETWORK_RETRY_DELAY)
+                    continue
+                break
 
             if not result.success:
                 error_msg = result.stderr or result.stdout or f"exit code {result.return_code}"
@@ -1499,7 +1573,7 @@ class SpiderFootInstaller:
         Returns:
             Tuple of (success, message)
         """
-        work_dir = work_dir.replace("~", f"/home/{username}")
+        work_dir = _expand_remote_home(work_dir, username)
 
         result = self.ssh.execute(
             hostname, username,
@@ -1705,18 +1779,21 @@ class DistributedScanController:
 
     def validate_workers(
         self,
-        on_progress: Optional[Callable[[str, str], None]] = None
+        on_progress: Optional[Callable[[str, str], None]] = None,
+        workers: Optional[List[WorkerConfig]] = None
     ) -> Dict[str, Tuple[bool, str]]:
         """
-        Validate connectivity to all enabled workers.
+        Validate connectivity to workers.
 
         Args:
             on_progress: Optional callback(hostname, status)
+            workers: Optional list of workers to validate (defaults to all enabled)
 
         Returns:
             Dict mapping hostname to (success, message)
         """
-        workers = self.config_manager.get_enabled_workers()
+        if workers is None:
+            workers = self.config_manager.get_enabled_workers()
         results = {}
 
         def validate_one(worker: WorkerConfig):
@@ -1748,18 +1825,21 @@ class DistributedScanController:
 
     def setup_all_workers(
         self,
-        on_progress: Optional[Callable[[str], None]] = None
+        on_progress: Optional[Callable[[str], None]] = None,
+        workers: Optional[List[WorkerConfig]] = None
     ) -> Dict[str, WorkerSetupResult]:
         """
-        Setup all enabled workers (apt update, tmux, SpiderFoot).
+        Setup workers (apt update, tmux, SpiderFoot).
 
         Args:
             on_progress: Optional progress callback
+            workers: Optional list of workers to setup (defaults to all enabled)
 
         Returns:
             Dict mapping hostname to WorkerSetupResult
         """
-        workers = self.config_manager.get_enabled_workers()
+        if workers is None:
+            workers = self.config_manager.get_enabled_workers()
         results = {}
 
         # Setup workers sequentially to avoid overwhelming apt
@@ -1789,18 +1869,21 @@ class DistributedScanController:
 
     def detect_all_resources(
         self,
-        on_progress: Optional[Callable[[str, str], None]] = None
+        on_progress: Optional[Callable[[str, str], None]] = None,
+        workers: Optional[List[WorkerConfig]] = None
     ) -> Dict[str, Tuple[Optional[int], Optional[int], Optional[int]]]:
         """
-        Detect resources on all enabled workers.
+        Detect resources on workers.
 
         Args:
             on_progress: Optional callback(hostname, status)
+            workers: Optional list of workers to detect (defaults to all enabled)
 
         Returns:
             Dict mapping hostname to (ram_gb, cpu_cores, recommended_parallel)
         """
-        workers = self.config_manager.get_enabled_workers()
+        if workers is None:
+            workers = self.config_manager.get_enabled_workers()
         results = self.resource_detector.detect_all_workers(workers, on_progress)
 
         # Update worker configs
@@ -1859,9 +1942,10 @@ class DistributedScanController:
 
         # Kill any existing SpiderFoot processes first
         # WARNING: This will kill running scans!
+        safe_user = shlex.quote(username)
         kill_cmd = f"""
 pkill -9 -f 'sf.py.*-l' 2>/dev/null || true
-pkill -9 -u {username} -f spiderfoot 2>/dev/null || true
+pkill -9 -u {safe_user} -f spiderfoot 2>/dev/null || true
 sleep 1
 """
         self.ssh.execute(hostname, username, kill_cmd, timeout=30)
@@ -1980,7 +2064,7 @@ echo "STOPPED"
     def check_web_server_status(
         self,
         worker: WorkerConfig
-    ) -> Tuple[bool, int]:
+    ) -> Tuple[bool, int, bool]:
         """
         Check if SpiderFoot web server is running on a worker.
 
@@ -1988,7 +2072,9 @@ echo "STOPPED"
             worker: Worker configuration
 
         Returns:
-            (is_running, running_scan_count)
+            (is_running, running_scan_count, ssh_reachable)
+            - ssh_reachable=False means SSH itself failed (worker may be dead)
+            - ssh_reachable=True, is_running=False means server is confirmed down
         """
         hostname = worker.hostname
         username = worker.username
@@ -1997,6 +2083,10 @@ echo "STOPPED"
         # Check if web server is responding
         check_cmd = f"curl -s -o /dev/null -w '%{{http_code}}' http://127.0.0.1:{port}/ 2>/dev/null || echo '000'"
         result = self.ssh.execute(hostname, username, check_cmd, timeout=10)
+
+        if not result.success:
+            # SSH itself failed - worker may be unreachable
+            return False, 0, False
 
         is_running = result.stdout.strip() == "200"
 
@@ -2014,7 +2104,7 @@ python3 -c "import sys,json; data=json.load(sys.stdin); print(sum(1 for s in dat
             except ValueError:
                 active_scans = 0
 
-        return is_running, active_scans
+        return is_running, active_scans, True
 
     def start_distributed_scan(
         self,
@@ -2213,8 +2303,8 @@ python3 -c "import sys,json; data=json.load(sys.stdin); print(sum(1 for s in dat
         """
         hostname = worker.hostname
         username = worker.username
-        work_dir = self.config.remote_work_dir.replace("~", f"/home/{username}")
-        sf_dir = self.config.spiderfoot_install_dir.replace("~", f"/home/{username}")
+        work_dir = _expand_remote_home(self.config.remote_work_dir, username)
+        sf_dir = _expand_remote_home(self.config.spiderfoot_install_dir, username)
 
         # 1. Create domains file locally (with validation)
         # Validate domains to prevent command injection
@@ -2499,17 +2589,18 @@ trap - EXIT
 
             # Kill any existing SpiderFoot processes and tmux session
             # Use multiple approaches for reliability (pkill, killall, kill with pgrep)
+            safe_user = shlex.quote(username)
             kill_cmd = f"""
 tmux kill-session -t sf-scans 2>/dev/null || true
 tmux kill-server 2>/dev/null || true
 pkill -9 -f run_scans.sh 2>/dev/null || true
 pkill -9 -f timeout 2>/dev/null || true
 killall -9 timeout 2>/dev/null || true
-pkill -9 -u {username} python3 2>/dev/null || true
-pkill -9 -u {username} python 2>/dev/null || true
-killall -9 -u {username} python3 2>/dev/null || true
+pkill -9 -u {safe_user} python3 2>/dev/null || true
+pkill -9 -u {safe_user} python 2>/dev/null || true
+killall -9 -u {safe_user} python3 2>/dev/null || true
 pkill -9 -f sf.py 2>/dev/null || true
-kill -9 $(pgrep -u {username} python3) 2>/dev/null || true
+kill -9 $(pgrep -u {safe_user} python3) 2>/dev/null || true
 true
 """
             self.ssh.execute(hostname, username, kill_cmd, timeout=30)
@@ -2583,6 +2674,35 @@ true
         except ValueError:
             # Parse failed - assume queue is full for safety
             return max_concurrent
+
+    def _save_worker_domain_list(
+        self,
+        worker: WorkerConfig,
+        domains: List[str]
+    ) -> None:
+        """
+        Save the list of domains assigned to a worker for crash recovery.
+
+        Writes to {master_output_dir}/worker_domains_{nickname}.txt on the master.
+
+        Args:
+            worker: Worker configuration
+            domains: List of domains assigned to this worker
+        """
+        try:
+            output_dir = self.config.master_output_dir
+            os.makedirs(output_dir, exist_ok=True)
+
+            nickname = worker.nickname or worker.hostname.replace(".", "_")
+            filepath = os.path.join(output_dir, f"worker_domains_{nickname}.txt")
+
+            with open(filepath, 'w') as f:
+                f.write(f"# Domains assigned to {worker.get_display_name()} ({worker.hostname})\n")
+                f.write(f"# Saved at {datetime.now().isoformat()}\n")
+                for domain in domains:
+                    f.write(f"{domain}\n")
+        except OSError as e:
+            logging.warning(f"Could not save domain list for {worker.get_display_name()}: {e}")
 
     def _submit_single_scan(
         self,
@@ -2689,7 +2809,7 @@ true
 
         hostname = worker.hostname
         port = worker.gui_port
-        work_dir = self.config.remote_work_dir.replace("~", f"/home/{worker.username}")
+        work_dir = _expand_remote_home(self.config.remote_work_dir, worker.username)
 
         # Validate domains
         valid_domain_pattern = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9\-\.]*[a-zA-Z0-9]$')
@@ -2702,11 +2822,14 @@ true
         if not validated_domains:
             return False, "No valid domains after validation"
 
+        # Save domain-to-worker mapping for crash recovery
+        self._save_worker_domain_list(worker, validated_domains)
+
         # Ensure web server is running
         if on_progress:
             on_progress(f"[{worker.get_display_name()}] Checking web server...")
 
-        is_running, _ = self.check_web_server_status(worker)
+        is_running, _, ssh_ok = self.check_web_server_status(worker)
         if not is_running:
             if on_progress:
                 on_progress(f"[{worker.get_display_name()}] Starting web server...")
@@ -2851,12 +2974,208 @@ true
             self.ssh.execute(hostname, worker.username, save_cmd)
 
         if on_progress:
-            on_progress(f"[{worker.get_display_name()}] All {submitted} scans submitted ({failed} failed). Queue complete.")
+            on_progress(f"[{worker.get_display_name()}] All {submitted} scans submitted ({failed} failed). Entering monitoring phase...")
+
+        # Monitor running scans for timeouts and completion
+        if submitted > 0:
+            aborted = self._monitor_worker_scans(worker, on_progress)
+            if aborted:
+                if on_progress:
+                    on_progress(f"[{worker.get_display_name()}] Monitoring complete. {aborted} scan(s) aborted due to timeout.")
+            else:
+                if on_progress:
+                    on_progress(f"[{worker.get_display_name()}] All scans finished.")
 
         if submitted > 0:
             return True, f"Submitted {submitted}/{len(validated_domains)} scans via rolling queue ({failed} failed)"
         else:
             return False, f"All {failed} scan submissions failed"
+
+    def _monitor_worker_scans(
+        self,
+        worker: WorkerConfig,
+        on_progress: Optional[Callable[[str], None]] = None
+    ) -> int:
+        """
+        Monitor running scans on a worker and abort any that exceed hard_timeout_hours.
+
+        Polls the worker's /scanlist endpoint periodically. The elapsed-time calculation
+        is done ON THE WORKER (not the master) to avoid timezone mismatches.
+        Calls /stopscan on scans that have been running too long.
+        Continues until all scans are in a terminal state (FINISHED/ABORTED/FAILED).
+
+        Args:
+            worker: Worker configuration
+            on_progress: Optional progress callback
+
+        Returns:
+            Number of scans aborted due to timeout
+        """
+        hostname = worker.hostname
+        username = worker.username
+        port = worker.gui_port
+        hard_timeout_hours = self.config.hard_timeout_hours
+        hard_timeout_seconds = int(hard_timeout_hours * 3600)
+        poll_interval = 60  # Check every 60 seconds
+        aborted_count = 0
+        last_agent_check = time.time()
+        agent_check_interval = 300
+        consecutive_failures = 0
+        restart_attempted = False
+        monitor_start = time.time()
+        # Watchdog: don't monitor longer than 2x the hard timeout
+        max_monitor_seconds = hard_timeout_seconds * 2
+
+        if on_progress:
+            on_progress(f"[{worker.get_display_name()}] Monitoring scans (timeout: {hard_timeout_hours}h, polling every {poll_interval}s)...")
+
+        while True:
+            time.sleep(poll_interval)
+
+            # Watchdog: bail out if monitoring has run too long
+            elapsed_monitoring = time.time() - monitor_start
+            if elapsed_monitoring > max_monitor_seconds:
+                if on_progress:
+                    on_progress(f"[{worker.get_display_name()}] Monitor watchdog: exceeded {hard_timeout_hours * 2:.0f}h. Exiting monitor.")
+                break
+
+            # Refresh SSH agent periodically
+            if self.config.use_ssh_agent and (time.time() - last_agent_check > agent_check_interval):
+                fix_ssh_auth_sock()
+                last_agent_check = time.time()
+
+            # Query scans on the WORKER. Elapsed time is computed on the worker
+            # to avoid timezone mismatches between master and worker clocks.
+            # Output format per active scan: scan_id|target|elapsed_seconds|status
+            # Then a separator '---' and summary: active|finished|failed|total
+            scan_cmd = f"""curl -s http://127.0.0.1:{port}/scanlist 2>/dev/null | python3 -c "
+import sys,json,time
+from datetime import datetime
+data=json.load(sys.stdin)
+now=time.time()
+for s in data:
+    if s[6] in ('RUNNING','STARTING','STARTED'):
+        started = s[4] or s[3]
+        elapsed = -1
+        if started:
+            try:
+                dt=datetime.strptime(started,'%Y-%m-%d %H:%M:%S')
+                elapsed=int(now - dt.timestamp())
+            except Exception:
+                pass
+        print(f'{{s[0]}}|{{s[2]}}|{{elapsed}}|{{s[6]}}')
+print('---')
+finished = sum(1 for s in data if s[6] in ('FINISHED',))
+failed = sum(1 for s in data if s[6] in ('ABORTED','FAILED','ERROR-FAILED'))
+active = sum(1 for s in data if s[6] in ('RUNNING','STARTING','STARTED'))
+print(f'{{active}}|{{finished}}|{{failed}}|{{len(data)}}')
+" 2>/dev/null || echo 'ERROR'"""
+
+            result = self.ssh.execute(hostname, username, scan_cmd, timeout=20)
+
+            if not result.success or result.stdout.strip() == 'ERROR':
+                consecutive_failures += 1
+                if consecutive_failures >= 3:
+                    if restart_attempted:
+                        # Already tried once — give up
+                        if on_progress:
+                            on_progress(f"[{worker.get_display_name()}] Web server still unresponsive after restart. Exiting monitor.")
+                        break
+                    # Web server may have crashed - try to restart once
+                    if on_progress:
+                        on_progress(f"[{worker.get_display_name()}] Web server not responding. Attempting restart...")
+                    restart_attempted = True
+                    success, msg = self.start_spiderfoot_web(worker, port, on_progress, force_restart=True)
+                    if not success:
+                        if on_progress:
+                            on_progress(f"[{worker.get_display_name()}] Web server restart failed: {msg}. Exiting monitor.")
+                        break
+                    consecutive_failures = 0
+                    continue
+                continue
+
+            consecutive_failures = 0
+            output_lines = result.stdout.strip().split('\n')
+
+            # Parse the separator and summary
+            separator_idx = None
+            for i, line in enumerate(output_lines):
+                if line.strip() == '---':
+                    separator_idx = i
+                    break
+
+            if separator_idx is None:
+                continue
+
+            # Parse running scan lines (before separator)
+            # Each line: scan_id|target|elapsed_seconds|status
+            running_scans = []
+            for line in output_lines[:separator_idx]:
+                parts = line.strip().split('|')
+                if len(parts) >= 4:
+                    try:
+                        elapsed_secs = int(parts[2])
+                    except ValueError:
+                        elapsed_secs = -1
+                    running_scans.append({
+                        'scan_id': parts[0],
+                        'target': parts[1],
+                        'elapsed_seconds': elapsed_secs,
+                        'status': parts[3],
+                    })
+
+            # Parse summary line (after separator)
+            summary_line = output_lines[separator_idx + 1] if separator_idx + 1 < len(output_lines) else ""
+            summary_parts = summary_line.strip().split('|')
+            active_count = 0
+            finished_count = 0
+            failed_count = 0
+            total_count = 0
+            if len(summary_parts) >= 4:
+                try:
+                    active_count = int(summary_parts[0])
+                    finished_count = int(summary_parts[1])
+                    failed_count = int(summary_parts[2])
+                    total_count = int(summary_parts[3])
+                except ValueError:
+                    pass
+
+            # Update worker progress
+            self.config_manager.update_worker(
+                hostname,
+                completed_domains=finished_count,
+                failed_domains=failed_count,
+                status="scanning" if active_count > 0 else "completed",
+            )
+
+            # Check for timed-out scans (elapsed already computed on worker)
+            for scan in running_scans:
+                elapsed_secs = scan['elapsed_seconds']
+                if elapsed_secs < 0:
+                    # Couldn't compute elapsed on worker — skip
+                    continue
+
+                if elapsed_secs > hard_timeout_seconds:
+                    scan_id = scan['scan_id']
+                    target = scan['target']
+                    elapsed_hours = elapsed_secs / 3600
+                    if on_progress:
+                        on_progress(f"[{worker.get_display_name()}] TIMEOUT: {target} running for {elapsed_hours:.1f}h (limit: {hard_timeout_hours}h). Aborting scan {scan_id}...")
+
+                    abort_cmd = f'curl -s "http://127.0.0.1:{port}/stopscan?id={shlex.quote(scan_id)}" > /dev/null 2>&1'
+                    self.ssh.execute(hostname, username, abort_cmd, timeout=10)
+                    aborted_count += 1
+
+            # Progress update
+            if on_progress:
+                on_progress(f"[{worker.get_display_name()}] Monitor: {active_count} active, {finished_count} finished, "
+                           f"{failed_count} failed/{total_count} total")
+
+            # All scans in terminal state - we're done
+            if active_count == 0:
+                break
+
+        return aborted_count
 
     def get_all_progress(
         self,
@@ -2880,11 +3199,12 @@ true
 
             progress = self._get_worker_progress(worker)
 
-            # Update worker config
+            # Update worker config with live progress data
             self.config_manager.update_worker(
                 worker.hostname,
                 completed_domains=progress.domains_completed,
                 failed_domains=progress.domains_failed,
+                assigned_domains=progress.domains_total,
                 status=progress.status,
             )
 
@@ -2910,7 +3230,7 @@ true
                         hostname=worker.hostname,
                         nickname=worker.nickname or worker.hostname,
                         status="unreachable",
-                        domains_total=worker.assigned_domains,
+                        domains_total=worker.assigned_domains or 0,
                         domains_completed=0,
                         domains_failed=0,
                         running_processes=0,
@@ -2951,7 +3271,7 @@ true
             hostname=hostname,
             nickname=worker.nickname or hostname,
             status="unknown",
-            domains_total=worker.assigned_domains,
+            domains_total=worker.assigned_domains or 0,
             domains_completed=0,
             domains_failed=0,
             running_processes=0,
@@ -2960,7 +3280,19 @@ true
         )
 
         # Check if web server is running
-        is_running, running_scans = self.check_web_server_status(worker)
+        is_running, running_scans, ssh_reachable = self.check_web_server_status(worker)
+
+        if not ssh_reachable:
+            # SSH failed - worker may be dead, use last-known status as fallback
+            progress.status = worker.status if worker.status in ("scanning", "completed") else "unreachable"
+            progress.error_message = "SSH connection failed - worker may be unreachable"
+            progress.domains_completed = worker.completed_domains or 0
+            progress.domains_failed = worker.failed_domains or 0
+            # Ensure total >= completed + failed (stale config data can cause mismatch)
+            min_total = progress.domains_completed + progress.domains_failed
+            if (progress.domains_total or 0) < min_total:
+                progress.domains_total = min_total
+            return progress
 
         if not is_running:
             progress.status = "idle"
@@ -2984,7 +3316,7 @@ try:
     failed = sum(1 for s in data if s[6] in failed_statuses)
     total = len(data)
     print(f'{{active}} {{finished}} {{failed}} {{total}}')
-except:
+except (json.JSONDecodeError, ValueError, KeyError, IndexError, TypeError):
     print('0 0 0 0')
 "
 """
@@ -3025,13 +3357,13 @@ except:
         """
         hostname = worker.hostname
         username = worker.username
-        work_dir = self.config.remote_work_dir.replace("~", f"/home/{username}")
+        work_dir = _expand_remote_home(self.config.remote_work_dir, username)
 
         progress = WorkerProgress(
             hostname=hostname,
             nickname=worker.nickname or hostname,
             status="unknown",
-            domains_total=worker.assigned_domains,
+            domains_total=worker.assigned_domains or 0,
             domains_completed=0,
             domains_failed=0,
             running_processes=0,
@@ -3147,7 +3479,7 @@ except:
         for worker in workers:
             hostname = worker.hostname
             username = worker.username
-            work_dir = self.config.remote_work_dir.replace("~", f"/home/{username}")
+            work_dir = _expand_remote_home(self.config.remote_work_dir, username)
 
             if on_progress:
                 on_progress(f"Collecting from {worker.get_display_name()}...")
@@ -3186,7 +3518,7 @@ except:
         """
         Collect results from a worker running in WebAPI mode.
 
-        Exports finished scans via SpiderFoot's API and downloads the CSVs.
+        Exports finished and aborted scans via SpiderFoot's API and downloads the CSVs.
 
         Args:
             worker: Worker configuration
@@ -3199,15 +3531,15 @@ except:
         hostname = worker.hostname
         username = worker.username
         port = worker.gui_port
-        work_dir = self.config.remote_work_dir.replace("~", f"/home/{username}")
+        work_dir = _expand_remote_home(self.config.remote_work_dir, username)
         export_dir = f"{work_dir}/exports"
 
         try:
             # Create export directory on worker
             self.ssh.execute(hostname, username, f"mkdir -p {shlex.quote(export_dir)}")
 
-            # Get list of finished scans and export each to CSV
-            # This script runs on the worker and exports all FINISHED scans
+            # Get list of scans and export each to CSV
+            # This script runs on the worker and exports all FINISHED and ABORTED scans
             export_script = f'''
 import json
 import urllib.request
@@ -3227,8 +3559,8 @@ try:
         target = scan[2]
         status = scan[6] if len(scan) > 6 else "UNKNOWN"
 
-        if status == "FINISHED":
-            # Create safe filename from target
+        if status in ("FINISHED", "ABORTED"):
+            # Create safe filename from target (ABORTED scans have partial results worth saving)
             safe_name = target.replace(".", "_").replace("/", "_").replace(":", "_")
             csv_path = os.path.join(export_dir, f"{{safe_name}}_{{scan_id[:8]}}.csv")
 
@@ -3287,6 +3619,368 @@ except Exception as e:
         except Exception as e:
             return False, f"WebAPI collection failed: {e}", 0
 
+    def recover_failed_worker(
+        self,
+        worker: 'WorkerConfig',
+        output_dir: str,
+        on_progress: Optional[Callable[[str], None]] = None
+    ) -> Tuple[List[str], List[str], int]:
+        """
+        Recover results from a failed worker and identify unfinished domains.
+
+        Tries to reach the worker to salvage completed scan results and determine
+        which domains still need scanning. If unreachable, falls back to the saved
+        domain list on the master (assumes all domains need rescan).
+
+        Args:
+            worker: The failed worker
+            output_dir: Directory to save recovered results
+            on_progress: Optional progress callback
+
+        Returns:
+            Tuple of (completed_domains, unfinished_domains, files_downloaded)
+        """
+        hostname = worker.hostname
+        username = worker.username
+        nickname = worker.nickname or hostname.replace(".", "_")
+        port = worker.gui_port
+
+        # Load assigned domains from saved file on master
+        domain_file = os.path.join(self.config.master_output_dir, f"worker_domains_{nickname}.txt")
+        assigned_domains = []
+        if os.path.exists(domain_file):
+            with open(domain_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        assigned_domains.append(line)
+
+        if not assigned_domains:
+            if on_progress:
+                on_progress(f"No saved domain list found for {nickname}")
+            return [], [], 0
+
+        if on_progress:
+            on_progress(f"Found {len(assigned_domains)} assigned domains for {nickname}")
+
+        # Try to reach the worker and query scan status
+        completed_domains = []
+        files_downloaded = 0
+
+        is_running, _, ssh_ok = self.check_web_server_status(worker)
+        if ssh_ok:
+            if on_progress:
+                on_progress(f"Worker reachable via SSH, querying scan status...")
+
+            # Query scanlist to find completed scans
+            scan_cmd = (
+                f'curl -s -m 15 http://127.0.0.1:{port}/scanlist 2>/dev/null'
+            )
+            result = self.ssh.execute(hostname, username, scan_cmd, timeout=20)
+
+            if result.success and result.stdout.strip():
+                try:
+                    import json
+                    scans = json.loads(result.stdout.strip())
+                    for scan in scans:
+                        status = scan[6] if len(scan) > 6 else "UNKNOWN"
+                        target = scan[2] if len(scan) > 2 else ""
+                        if status == "FINISHED" and target:
+                            completed_domains.append(target.lower())
+                except (json.JSONDecodeError, IndexError):
+                    if on_progress:
+                        on_progress("Could not parse scanlist response")
+
+            if on_progress:
+                on_progress(f"Found {len(completed_domains)} completed scans on worker")
+
+            # Download completed results
+            if completed_domains:
+                if on_progress:
+                    on_progress(f"Downloading completed results...")
+                worker_dir = os.path.join(output_dir, nickname)
+                os.makedirs(worker_dir, exist_ok=True)
+                success, msg, count = self._collect_results_webapi(
+                    worker, worker_dir, on_progress
+                )
+                files_downloaded = count if success else 0
+        else:
+            if on_progress:
+                on_progress(f"Worker unreachable — all {len(assigned_domains)} domains need rescan")
+
+        # Determine unfinished domains
+        completed_set = {d.lower() for d in completed_domains}
+        unfinished_domains = [d for d in assigned_domains if d.lower() not in completed_set]
+
+        return completed_domains, unfinished_domains, files_downloaded
+
+    def redistribute_domains(
+        self,
+        domains: List[str],
+        intensity: str = "passive",
+        on_progress: Optional[Callable[[str], None]] = None
+    ) -> Tuple[bool, str]:
+        """
+        Redistribute domains to available (completed/idle) workers.
+
+        Finds workers that have finished their scans and distributes the given
+        domains across them using the existing rolling queue mechanism.
+
+        Args:
+            domains: Domains to redistribute
+            intensity: Scan intensity preset
+            on_progress: Optional progress callback
+
+        Returns:
+            Tuple of (success, message)
+        """
+        import threading
+
+        # Find available workers (reachable with SpiderFoot running)
+        # Don't filter by stored status — it may be stale (e.g. "scanning" after tmux died)
+        workers = self.config_manager.get_enabled_workers()
+        available = []
+        for w in workers:
+            is_running, _, ssh_ok = self.check_web_server_status(w)
+            if ssh_ok and is_running:
+                available.append(w)
+
+        if not available:
+            return False, "No available workers found (none reachable with SpiderFoot running)"
+
+        if on_progress:
+            on_progress(f"Distributing {len(domains)} domains across {len(available)} available workers")
+
+        # Split domains among available workers
+        domain_splits = DomainDistributor.split_domains(domains, len(available))
+        parallel = self.config.parallel_scans_per_worker
+
+        # Save domain lists for each worker
+        for i, w in enumerate(available):
+            if domain_splits[i]:
+                self._save_worker_domain_list(w, domain_splits[i])
+
+        # Run workers in parallel threads
+        results_lock = threading.Lock()
+        worker_results = {}
+
+        def run_worker(worker, worker_domains):
+            try:
+                def worker_progress(msg):
+                    if on_progress:
+                        on_progress(f"  [{worker.nickname}] {msg}")
+
+                success, msg = self._start_worker_scan_webapi(
+                    worker, worker_domains, intensity, parallel, worker_progress
+                )
+                with results_lock:
+                    worker_results[worker.hostname] = (success, msg)
+                    if success:
+                        self.config_manager.update_worker(
+                            worker.hostname,
+                            assigned_domains=(worker.assigned_domains or 0) + len(worker_domains),
+                            status="scanning"
+                        )
+            except Exception as e:
+                with results_lock:
+                    worker_results[worker.hostname] = (False, str(e))
+
+        threads = []
+        for i, worker in enumerate(available):
+            if not domain_splits[i]:
+                continue
+            t = threading.Thread(target=run_worker, args=(worker, domain_splits[i]))
+            t.daemon = True
+            t.start()
+            threads.append(t)
+
+        # Wait for all threads
+        for t in threads:
+            t.join()
+
+        # Summary
+        succeeded = sum(1 for s, _ in worker_results.values() if s)
+        failed = sum(1 for s, _ in worker_results.values() if not s)
+
+        if failed == 0:
+            return True, f"Successfully redistributed {len(domains)} domains to {succeeded} workers"
+        elif succeeded > 0:
+            return True, f"Partially redistributed: {succeeded} workers OK, {failed} failed"
+        else:
+            return False, "All redistribution attempts failed"
+
+    def resume_all_workers(
+        self,
+        intensity: str = "passive",
+        on_progress: Optional[Callable[[str], None]] = None
+    ) -> Tuple[bool, str, Dict]:
+        """
+        Resume scanning on all workers by finding unsubmitted domains.
+
+        For each worker:
+        1. Check if SpiderFoot is running (start it if not, without killing scans)
+        2. Read the assigned domain list from master
+        3. Query scanlist to find completed/running/failed scans
+        4. Calculate unsubmitted domains (never started)
+        5. Start rolling queue only for unsubmitted domains
+
+        Args:
+            intensity: Scan intensity preset
+            on_progress: Optional progress callback
+
+        Returns:
+            Tuple of (success, message, details_dict)
+        """
+        import threading
+        import json
+
+        workers = self.config_manager.get_enabled_workers()
+        if not workers:
+            return False, "No workers configured", {}
+
+        parallel = self.config.parallel_scans_per_worker
+        output_dir = self.config.master_output_dir or "./distributed_results"
+        details = {}
+
+        # Phase 1: Analyze all workers
+        workers_to_resume = []  # (worker, unsubmitted_domains)
+
+        for worker in sorted(workers, key=lambda w: w.nickname or w.hostname):
+            nickname = worker.nickname or worker.hostname.replace(".", "_")
+            if on_progress:
+                on_progress(f"Checking {nickname}...")
+
+            # Read assigned domain list
+            domain_file = os.path.join(output_dir, f"worker_domains_{nickname}.txt")
+            assigned_domains = []
+            if os.path.exists(domain_file):
+                with open(domain_file, 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#'):
+                            assigned_domains.append(line)
+
+            if not assigned_domains:
+                details[nickname] = {
+                    'status': 'skipped', 'reason': 'no domain list',
+                    'assigned': 0, 'unsubmitted': 0
+                }
+                continue
+
+            # Check SSH reachability and SpiderFoot status
+            is_running, active_scans, ssh_ok = self.check_web_server_status(worker)
+
+            if not ssh_ok:
+                details[nickname] = {
+                    'status': 'unreachable', 'reason': 'SSH failed',
+                    'assigned': len(assigned_domains), 'unsubmitted': len(assigned_domains)
+                }
+                if on_progress:
+                    on_progress(f"  {nickname}: unreachable via SSH")
+                continue
+
+            # Start SpiderFoot if not running (safe — won't kill existing scans)
+            if not is_running:
+                if on_progress:
+                    on_progress(f"  {nickname}: SpiderFoot not running, starting...")
+                success, msg = self.start_spiderfoot_web(
+                    worker, port=worker.gui_port, force_restart=False
+                )
+                if not success:
+                    details[nickname] = {
+                        'status': 'error', 'reason': f'failed to start SpiderFoot: {msg}',
+                        'assigned': len(assigned_domains), 'unsubmitted': len(assigned_domains)
+                    }
+                    continue
+                is_running = True
+
+            # Query scanlist to find what's already submitted
+            scan_cmd = f'curl -s -m 15 http://127.0.0.1:{worker.gui_port}/scanlist 2>/dev/null'
+            result = self.ssh.execute(worker.hostname, worker.username, scan_cmd, timeout=20)
+
+            submitted_domains = set()  # Domains already in scanlist (any status)
+            if result.success and result.stdout.strip():
+                try:
+                    scans = json.loads(result.stdout.strip())
+                    for scan in scans:
+                        target = scan[2] if len(scan) > 2 else ""
+                        if target:
+                            submitted_domains.add(target.lower())
+                except (json.JSONDecodeError, IndexError):
+                    if on_progress:
+                        on_progress(f"  {nickname}: could not parse scanlist")
+
+            # Find unsubmitted domains (never started at all)
+            unsubmitted = [d for d in assigned_domains if d.lower() not in submitted_domains]
+
+            details[nickname] = {
+                'status': 'ok',
+                'assigned': len(assigned_domains),
+                'submitted': len(submitted_domains),
+                'unsubmitted': len(unsubmitted),
+                'active_scans': active_scans
+            }
+
+            if unsubmitted:
+                workers_to_resume.append((worker, unsubmitted))
+                if on_progress:
+                    on_progress(f"  {nickname}: {len(unsubmitted)} unsubmitted of {len(assigned_domains)} assigned ({active_scans} active)")
+            else:
+                if on_progress:
+                    on_progress(f"  {nickname}: all {len(assigned_domains)} domains submitted ({active_scans} active)")
+
+        if not workers_to_resume:
+            return True, "All domains already submitted on all workers — nothing to resume", details
+
+        # Phase 2: Start rolling queues in parallel threads
+        total_unsubmitted = sum(len(domains) for _, domains in workers_to_resume)
+        if on_progress:
+            on_progress(f"\nResuming {total_unsubmitted} unsubmitted domains on {len(workers_to_resume)} workers...")
+
+        results_lock = threading.Lock()
+        thread_results = {}
+
+        def run_worker(worker, worker_domains):
+            try:
+                def worker_progress(msg):
+                    if on_progress:
+                        on_progress(f"  [{worker.nickname}] {msg}")
+
+                success, msg = self._start_worker_scan_webapi(
+                    worker, worker_domains, intensity, parallel, worker_progress
+                )
+                with results_lock:
+                    thread_results[worker.hostname] = (success, msg)
+                    if success:
+                        self.config_manager.update_worker(
+                            worker.hostname,
+                            status="scanning"
+                        )
+            except Exception as e:
+                with results_lock:
+                    thread_results[worker.hostname] = (False, str(e))
+
+        threads = []
+        for worker, domains in workers_to_resume:
+            t = threading.Thread(target=run_worker, args=(worker, domains))
+            t.daemon = True
+            t.start()
+            threads.append(t)
+
+        # Wait for all threads
+        for t in threads:
+            t.join()
+
+        succeeded = sum(1 for s, _ in thread_results.values() if s)
+        failed = sum(1 for s, _ in thread_results.values() if not s)
+
+        if failed == 0:
+            return True, f"Resumed {total_unsubmitted} domains on {succeeded} workers", details
+        elif succeeded > 0:
+            return True, f"Partially resumed: {succeeded} workers OK, {failed} failed", details
+        else:
+            return False, "All resume attempts failed", details
+
     def abort_worker_scans(
         self,
         hostname: str,
@@ -3313,7 +4007,7 @@ except Exception as e:
             return False, f"Worker not found: {hostname}", []
 
         username = worker.username
-        work_dir = self.config.remote_work_dir.replace("~", f"/home/{username}")
+        work_dir = _expand_remote_home(self.config.remote_work_dir, username)
 
         # Get list of domains that were being scanned (not yet completed)
         aborted_domains = []
@@ -3332,7 +4026,7 @@ try:
         if s[6]=='RUNNING':
             import urllib.request
             urllib.request.urlopen(f'http://127.0.0.1:{port}/stopscan?id={{s[0]}}')
-except: pass" 2>/dev/null || true
+except Exception: pass" 2>/dev/null || true
 """
             self.ssh.execute(hostname, username, stop_cmd, timeout=30)
             time.sleep(2)
@@ -3346,17 +4040,18 @@ except: pass" 2>/dev/null || true
         # that don't have sf.py or spiderfoot in their command line
         # Also kill bash scan scripts and timeout wrappers which can become orphaned
         # Use multiple approaches for reliability (pkill, killall, kill with pgrep)
+        safe_user = shlex.quote(username)
         kill_cmd = f"""
 tmux kill-server 2>/dev/null || true
 pkill -9 -f run_scans.sh 2>/dev/null || true
 pkill -9 -f timeout 2>/dev/null || true
 killall -9 timeout 2>/dev/null || true
-pkill -9 -u {username} python3 2>/dev/null || true
-pkill -9 -u {username} python 2>/dev/null || true
-killall -9 -u {username} python3 2>/dev/null || true
+pkill -9 -u {safe_user} python3 2>/dev/null || true
+pkill -9 -u {safe_user} python 2>/dev/null || true
+killall -9 -u {safe_user} python3 2>/dev/null || true
 pkill -9 -f sf.py 2>/dev/null || true
 pkill -9 -f spiderfoot 2>/dev/null || true
-kill -9 $(pgrep -u {username} python3) 2>/dev/null || true
+kill -9 $(pgrep -u {safe_user} python3) 2>/dev/null || true
 kill -9 $(pgrep -f sf.py) 2>/dev/null || true
 true
 """
@@ -3366,14 +4061,14 @@ true
         time.sleep(2)
 
         # Verify processes are dead - retry kill if any remain
-        verify_cmd = f"pgrep -u {username} python3 2>/dev/null | wc -l"
+        verify_cmd = f"pgrep -u {safe_user} python3 2>/dev/null | wc -l"
         verify_result = self.ssh.execute(hostname, username, verify_cmd, timeout=15)
 
         try:
             remaining = int(verify_result.stdout.strip())
             if remaining > 0:
                 # Second kill attempt - more aggressive
-                self.ssh.execute(hostname, username, f"kill -9 $(pgrep -u {username} python3) 2>/dev/null || true; killall -9 python3 2>/dev/null || true", timeout=30)
+                self.ssh.execute(hostname, username, f"kill -9 $(pgrep -u {safe_user} python3) 2>/dev/null || true; killall -9 python3 2>/dev/null || true", timeout=30)
                 time.sleep(2)
         except ValueError:
             pass
@@ -3384,13 +4079,11 @@ true
             clean_cmd = f"rm -rf {shlex.quote(work_dir)}/output {shlex.quote(work_dir)}/logs && mkdir -p {shlex.quote(work_dir)}/output {shlex.quote(work_dir)}/logs"
             self.ssh.execute(hostname, username, clean_cmd, timeout=30)
 
-        # Update worker status and reset progress counters
+        # Update worker status (keep progress counters — they represent real work done
+        # and will be overwritten naturally when a new scan session starts)
         self.config_manager.update_worker(
             hostname,
-            status="idle",
-            assigned_domains=0,
-            completed_domains=0,
-            failed_domains=0
+            status="idle"
         )
 
         # TODO: Parse domain list and compare with completed CSVs to find aborted ones
@@ -3485,7 +4178,7 @@ true
             return False, f"Worker not found: {hostname}"
 
         username = worker.username
-        work_dir = self.config.remote_work_dir.replace("~", f"/home/{username}")
+        work_dir = _expand_remote_home(self.config.remote_work_dir, username)
 
         # Get the most recent log file
         log_result = self.ssh.execute(
@@ -3564,7 +4257,7 @@ true
             return False, f"Worker not found: {hostname}"
 
         username = worker.username
-        work_dir = self.config.remote_work_dir.replace("~", f"/home/{username}")
+        work_dir = _expand_remote_home(self.config.remote_work_dir, username)
 
         # List error files
         list_result = self.ssh.execute(

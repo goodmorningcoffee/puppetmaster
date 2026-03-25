@@ -127,6 +127,22 @@ MENU_ITEMS = {
         ],
         next_step="Use [3] to scan imported domains",
     ),
+    "D": MenuItem(
+        key="D",
+        name="Delete/Modify domain lists",
+        category="DISCOVERY & SCANNING",
+        title="DOMAIN LIST MANAGER",
+        subtitle="Delete or Modify Saved Domain Lists",
+        description=[
+            "Manage the .txt domain list files saved in the domain_lists/",
+            "directory. Delete individual files or clear them all.",
+            "",
+            "- View all saved domain list files",
+            "- Select specific files to delete",
+            "- Delete all domain list files at once",
+        ],
+        next_step="Use [1] to scrape new domains or [2] to load a file",
+    ),
     "03": MenuItem(
         key="03",
         name="SpiderFoot Control Center",
@@ -423,7 +439,7 @@ class UIState:
 
     def _rebuild_menu(self):
         """Build menu key list based on current state"""
-        self.menu_keys = ["01", "02", "03", "04", "12", "05", "06", "11"]
+        self.menu_keys = ["01", "02", "D", "03", "04", "12", "05", "06", "11"]
         if self.show_kali:
             self.menu_keys.extend(["K1", "K2", "K3", "K4", "K5"])
         self.menu_keys.extend(["07", "08", "09", "10", "Q"])
@@ -1018,7 +1034,7 @@ class CyberpunkHUD:
         text = Text()
 
         categories = [
-            ("DISCOVERY & SCANNING", ["01", "02", "03", "04", "12"]),
+            ("DISCOVERY & SCANNING", ["01", "02", "D", "03", "04", "12"]),
             ("ANALYSIS", ["05", "06", "11"]),
         ]
         if self.state.show_kali:

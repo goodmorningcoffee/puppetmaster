@@ -51,7 +51,7 @@ class UIState:
             self.menu_keys = self._build_menu_keys()
 
     def _build_menu_keys(self) -> list:
-        keys = ["01", "02", "03", "04", "11", "05", "06", "12"]
+        keys = ["01", "02", "D", "03", "04", "11", "05", "06", "12"]
         if self.show_kali:
             keys.extend(["K1", "K2", "K3", "K4", "K5"])
         keys.extend(["07", "08", "09", "10", "Q"])
@@ -194,7 +194,7 @@ class GamingHUD:
         table.add_column("Option", style="white")
 
         categories = [
-            ("DISCOVERY & SCANNING", ["01", "02", "03", "04", "11"]),
+            ("DISCOVERY & SCANNING", ["01", "02", "D", "03", "04", "11"]),
             ("ANALYSIS", ["05", "06", "12"]),
         ]
         if self.state.show_kali:

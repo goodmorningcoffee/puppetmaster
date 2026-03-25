@@ -33,6 +33,7 @@ License: MIT
 
 import os
 import sys
+import shlex
 import subprocess
 import time
 import shutil
@@ -216,6 +217,7 @@ import threading
 # =============================================================================
 # Global state for background scanning
 _background_scan_thread = None
+_background_scan_stop = threading.Event()
 _background_scan_stats = {
     'running': False,
     'completed': 0,
@@ -254,6 +256,10 @@ def _run_background_scans(scanner, tracker):
     global _background_scan_stats
 
     def on_start(domain):
+        # Check if stop was requested between domains
+        if _background_scan_stop.is_set():
+            scanner._stop_requested = True
+            return
         _update_background_stats(
             current_domain=domain,
             current_module=None,
@@ -289,7 +295,7 @@ def _run_background_scans(scanner, tracker):
     try:
         scanner.process_queue(progress_callback=on_progress)
     except Exception as e:
-        pass  # Errors logged in tracker
+        print(f"  [ERROR] Background scan error: {e}")
     finally:
         _update_background_stats(running=False, current_domain=None, current_module=None)
 
@@ -535,11 +541,15 @@ def print_info(message):
     """Print an info message"""
     print(f"{C.BRIGHT_CYAN}ℹ {message}{C.RESET}")
 
-def get_input(prompt, default=None, max_length=10000):
+def get_input(prompt, default=None, max_length=10000, allow_multiline=False):
     """
     Get user input with a styled prompt.
     Returns None on Ctrl+C/Ctrl+D to signal cancellation.
     Callers should check for None and handle as "user wants to cancel".
+
+    Args:
+        allow_multiline: If True, preserve multi-line paste instead of truncating.
+                        Used for hostname collection where bulk paste is expected.
     """
     if default:
         prompt_text = f"{C.BRIGHT_MAGENTA}► {prompt} {C.DIM}[{default}]{C.RESET}: "
@@ -552,12 +562,15 @@ def get_input(prompt, default=None, max_length=10000):
         if len(response) > max_length:
             print(f"\n{C.BRIGHT_YELLOW}⚠ Input too long ({len(response)} chars). Truncated to {max_length}.{C.RESET}")
             response = response[:max_length]
-        # Warn about suspicious input (likely accidental paste)
+        # Handle multi-line paste
         if '\n' in response or len(response) > 500:
             line_count = response.count('\n') + 1
             if line_count > 5:
-                print(f"\n{C.BRIGHT_YELLOW}⚠ Detected multi-line paste ({line_count} lines). Using first line only.{C.RESET}")
-                response = response.split('\n')[0].strip()
+                if allow_multiline:
+                    print(f"\n{C.BRIGHT_GREEN}✓ Received {line_count} lines.{C.RESET}")
+                else:
+                    print(f"\n{C.BRIGHT_YELLOW}⚠ Detected multi-line paste ({line_count} lines). Using first line only.{C.RESET}")
+                    response = response.split('\n')[0].strip()
         return response if response else (default or "")
     except (EOFError, KeyboardInterrupt):
         print()  # Newline after ^C or ^D
@@ -875,7 +888,12 @@ def restart_in_venv(venv_python):
     time.sleep(1)
 
     # Re-run this script with venv python
-    os.execv(venv_python, [venv_python] + sys.argv)
+    try:
+        os.execv(venv_python, [venv_python] + sys.argv)
+    except OSError as e:
+        print_error(f"Failed to restart in venv: {e}")
+        print_info("Try manually: source venv/bin/activate && python puppetmaster.py")
+        sys.exit(1)
 
 
 def install_dependencies(packages, optional=False, venv_python=None):
@@ -1276,6 +1294,7 @@ websites that {C.UNDERLINE}appear{C.RESET}{C.DIM} independent but are secretly c
     print(f"  {C.BRIGHT_CYAN}DISCOVERY & SCANNING{C.RESET}")
     print_menu_item("1", "Scrape domains via keywords", "🔍")
     print_menu_item("2", "Load domains from file", "📂")
+    print_menu_item("D", "Delete/Modify domain lists", "🗑️")
     print_menu_item("3", "SpiderFoot Control Center (scans, GUI, DB)", "🕷️")
     print_menu_item("4", "Check scan queue status", "📋")
     print()
@@ -1703,6 +1722,9 @@ SpiderFoot is required for the web GUI. Would you like to install it now?
     print(f"\n{C.WHITE}Port Configuration:{C.RESET}")
     port_input = get_input(f"Enter port for SpiderFoot web UI [{default_port}]: ", str(default_port))
     port = int(port_input) if port_input and port_input.isdigit() else default_port
+    if not (1 <= port <= 65535):
+        print_warning(f"Port {port} out of valid range (1-65535), using default {default_port}")
+        port = default_port
 
     # Check if port is in use
     print_info(f"Checking if port {port} is available...")
@@ -2910,7 +2932,7 @@ def interactive_domain_removal(domains: set) -> set:
             print_success(f"Proceeding with {domain_count} domains")
             return current_domains
         elif choice.lower() != 'r':
-            print_success(f"Proceeding with {domain_count} domains")
+            print_warning("Invalid choice. Proceeding with current domains.")
             return current_domains
 
         # Show interactive picker
@@ -2984,6 +3006,244 @@ def interactive_domain_removal(domains: set) -> set:
         else:
             print_info("Cancelled - no changes made")
             # Loop continues
+
+
+def _run_delete_domain_lists():
+    """Main menu entry point for Delete/Modify domain lists."""
+    puppetmaster_dir = Path(__file__).parent
+    domain_lists_dir = puppetmaster_dir / "domain_lists"
+    available_lists = []
+
+    if domain_lists_dir.exists():
+        for txt_file in sorted(domain_lists_dir.glob("*.txt"), key=lambda x: x.stat().st_mtime, reverse=True):
+            try:
+                with open(txt_file, 'r') as f:
+                    domain_count = sum(1 for line in f if line.strip() and not line.strip().startswith('#'))
+                mod_time = datetime.fromtimestamp(txt_file.stat().st_mtime).strftime('%Y-%m-%d %H:%M')
+                available_lists.append({
+                    'path': txt_file,
+                    'name': txt_file.name,
+                    'domains': domain_count,
+                    'modified': mod_time
+                })
+            except Exception:
+                pass
+
+    _delete_modify_domain_lists(domain_lists_dir, available_lists)
+
+
+def _delete_modify_domain_lists(domain_lists_dir, available_lists):
+    """Submenu for deleting/managing domain list files."""
+    clear_screen()
+
+    if CYBER_UI_AVAILABLE:
+        console = get_console()
+        cyber_header("DELETE / MODIFY DOMAIN LISTS")
+    else:
+        print_section("Delete / Modify Domain Lists", C.BRIGHT_RED)
+
+    if not available_lists:
+        if CYBER_UI_AVAILABLE:
+            cyber_info("No domain list files found.")
+            cyber_prompt("Press Enter to return...")
+        else:
+            print_info("No domain list files found.")
+            get_input("\nPress Enter to return...")
+        return
+
+    if CYBER_UI_AVAILABLE:
+        console.print(f"[dim]Directory: {domain_lists_dir}[/]")
+        console.print(f"[dim]{len(available_lists)} file(s) found[/]\n")
+        console.print(f"  [bold yellow]\\[1][/] Select which files to delete")
+        console.print(f"  [bold red]\\[2][/] Delete ALL domain list files")
+        console.print(f"  [bold cyan]\\[B][/] Back\n")
+        choice = cyber_prompt("Choice", "b")
+    else:
+        print(f"{C.DIM}Directory: {domain_lists_dir}{C.RESET}")
+        print(f"{C.DIM}{len(available_lists)} file(s) found{C.RESET}\n")
+        print(f"  {C.BRIGHT_YELLOW}[1]{C.RESET} Select which files to delete")
+        print(f"  {C.BRIGHT_RED}[2]{C.RESET} Delete ALL domain list files")
+        print(f"  {C.BRIGHT_CYAN}[B]{C.RESET} Back\n")
+        choice = get_input("Choice", "b")
+
+    if not choice or choice.lower() == 'b':
+        return
+    elif choice == '1':
+        _select_and_delete_domain_files(domain_lists_dir, available_lists)
+    elif choice == '2':
+        _delete_all_domain_files(domain_lists_dir, available_lists)
+
+
+def _select_and_delete_domain_files(domain_lists_dir, available_lists):
+    """Show numbered list of domain files and let user select which to delete."""
+    clear_screen()
+
+    if CYBER_UI_AVAILABLE:
+        console = get_console()
+        cyber_header("SELECT FILES TO DELETE")
+        console.print()
+        for i, lst in enumerate(available_lists, 1):
+            console.print(f"  [bold yellow]\\[{i}][/] {lst['name']}")
+            console.print(f"      [dim]{lst['domains']} domains • {lst['modified']}[/]")
+        console.print()
+        cyber_info("Enter file numbers separated by commas (e.g. 1,3,5) or 'all'")
+        selection = cyber_prompt("Files to delete")
+    else:
+        print_section("Select Files to Delete", C.BRIGHT_RED)
+        print()
+        for i, lst in enumerate(available_lists, 1):
+            print(f"  {C.BRIGHT_YELLOW}[{i}]{C.RESET} {lst['name']}")
+            print(f"      {C.DIM}{lst['domains']} domains • {lst['modified']}{C.RESET}")
+        print()
+        print_info("Enter file numbers separated by commas (e.g. 1,3,5) or 'all'")
+        selection = get_input("Files to delete")
+
+    if not selection or selection.strip().lower() == 'b':
+        return
+
+    # Parse selection
+    if selection.strip().lower() == 'all':
+        selected = list(available_lists)
+    else:
+        selected = []
+        for part in selection.split(','):
+            part = part.strip()
+            if not part:
+                continue
+            if not part.isdigit():
+                if CYBER_UI_AVAILABLE:
+                    cyber_warning(f"Skipping invalid input: '{part}'")
+                else:
+                    print_warning(f"Skipping invalid input: '{part}'")
+                continue
+            idx = int(part) - 1
+            if 0 <= idx < len(available_lists):
+                if available_lists[idx] not in selected:
+                    selected.append(available_lists[idx])
+            else:
+                if CYBER_UI_AVAILABLE:
+                    cyber_warning(f"Skipping invalid number: {part} (valid range: 1-{len(available_lists)})")
+                else:
+                    print_warning(f"Skipping invalid number: {part} (valid range: 1-{len(available_lists)})")
+
+    if not selected:
+        if CYBER_UI_AVAILABLE:
+            cyber_info("No valid files selected.")
+            cyber_prompt("Press Enter to return...")
+        else:
+            print_info("No valid files selected.")
+            get_input("\nPress Enter to return...")
+        return
+
+    # Show confirmation
+    if CYBER_UI_AVAILABLE:
+        console = get_console()
+        console.print(f"\n[bold red]The following {len(selected)} file(s) will be permanently deleted:[/]\n")
+        for lst in selected:
+            console.print(f"  [red]✗[/] {lst['name']} [dim]({lst['domains']} domains)[/]")
+        console.print()
+        confirmed = cyber_confirm(f"Delete {len(selected)} file(s)?", default=False)
+    else:
+        print(f"\n{C.BRIGHT_RED}The following {len(selected)} file(s) will be permanently deleted:{C.RESET}\n")
+        for lst in selected:
+            print(f"  {C.BRIGHT_RED}✗{C.RESET} {lst['name']} {C.DIM}({lst['domains']} domains){C.RESET}")
+        print()
+        confirmed = confirm(f"Delete {len(selected)} file(s)?", default=False)
+
+    if not confirmed:
+        if CYBER_UI_AVAILABLE:
+            cyber_info("Cancelled - no files deleted.")
+        else:
+            print_info("Cancelled - no files deleted.")
+        return
+
+    # Delete files
+    deleted = 0
+    errors = 0
+    for lst in selected:
+        try:
+            Path(lst['path']).unlink()
+            deleted += 1
+        except Exception as e:
+            errors += 1
+            if CYBER_UI_AVAILABLE:
+                cyber_error(f"Failed to delete {lst['name']}: {e}")
+            else:
+                print_error(f"Failed to delete {lst['name']}: {e}")
+
+    if deleted > 0:
+        if CYBER_UI_AVAILABLE:
+            cyber_success(f"Deleted {deleted} file(s)")
+        else:
+            print_success(f"Deleted {deleted} file(s)")
+    if errors > 0:
+        if CYBER_UI_AVAILABLE:
+            cyber_warning(f"{errors} file(s) could not be deleted")
+        else:
+            print_warning(f"{errors} file(s) could not be deleted")
+
+    if CYBER_UI_AVAILABLE:
+        cyber_prompt("Press Enter to return...")
+    else:
+        get_input("\nPress Enter to return...")
+
+
+def _delete_all_domain_files(domain_lists_dir, available_lists):
+    """Delete all domain list files after confirmation."""
+    clear_screen()
+
+    if CYBER_UI_AVAILABLE:
+        console = get_console()
+        cyber_header("DELETE ALL DOMAIN LIST FILES")
+        console.print(f"\n[bold red]The following {len(available_lists)} file(s) will be permanently deleted:[/]\n")
+        for lst in available_lists:
+            console.print(f"  [red]✗[/] {lst['name']} [dim]({lst['domains']} domains)[/]")
+        console.print()
+        confirmed = cyber_confirm(f"Delete ALL {len(available_lists)} file(s)?", default=False)
+    else:
+        print_section("Delete ALL Domain List Files", C.BRIGHT_RED)
+        print(f"\n{C.BRIGHT_RED}The following {len(available_lists)} file(s) will be permanently deleted:{C.RESET}\n")
+        for lst in available_lists:
+            print(f"  {C.BRIGHT_RED}✗{C.RESET} {lst['name']} {C.DIM}({lst['domains']} domains){C.RESET}")
+        print()
+        confirmed = confirm(f"Delete ALL {len(available_lists)} file(s)?", default=False)
+
+    if not confirmed:
+        if CYBER_UI_AVAILABLE:
+            cyber_info("Cancelled - no files deleted.")
+        else:
+            print_info("Cancelled - no files deleted.")
+        return
+
+    # Delete all files
+    deleted = 0
+    errors = 0
+    for lst in available_lists:
+        try:
+            Path(lst['path']).unlink()
+            deleted += 1
+        except Exception as e:
+            errors += 1
+            if CYBER_UI_AVAILABLE:
+                cyber_error(f"Failed to delete {lst['name']}: {e}")
+            else:
+                print_error(f"Failed to delete {lst['name']}: {e}")
+
+    if deleted > 0:
+        if CYBER_UI_AVAILABLE:
+            cyber_success(f"Deleted {deleted} of {len(available_lists)} file(s)")
+        else:
+            print_success(f"Deleted {deleted} of {len(available_lists)} file(s)")
+    if errors > 0:
+        if CYBER_UI_AVAILABLE:
+            cyber_warning(f"{errors} file(s) could not be deleted")
+        else:
+            print_warning(f"{errors} file(s) could not be deleted")
+
+    if CYBER_UI_AVAILABLE:
+        cyber_prompt("Press Enter to return...")
+    else:
+        get_input("\nPress Enter to return...")
 
 
 def show_scrape_results_menu(domains, keywords, use_google, use_duckduckgo, max_results):
@@ -3164,7 +3424,9 @@ def show_scrape_results_menu(domains, keywords, use_google, use_duckduckgo, max_
                     elif d.startswith('https://'):
                         d = d[8:]
                     d = d.split('/')[0].strip()
-                    if d and '.' in d:
+                    import re as _re
+                    if (d and '.' in d and len(d) <= 253
+                            and _re.match(r'^[a-z0-9][a-z0-9.\-]*[a-z0-9]$', d)):
                         new_domains.append(d)
 
                 if new_domains:
@@ -3356,9 +3618,7 @@ def scrape_domains_menu():
                 set(last_domains), last_keywords,
                 use_google, use_duckduckgo, max_results
             )
-            if result is None:
-                pass
-            else:
+            if result is not None:
                 return
 
         elif resume_choice == "2":
@@ -3707,6 +3967,7 @@ def load_domains_menu():
             if len(available_lists) > 10:
                 console.print(f"  [dim]... and {len(available_lists) - 10} more files[/]")
             console.print(f"\n  [bold cyan]\\[C][/] Enter custom file path")
+            console.print(f"  [bold red]\\[D][/] Delete/Modify domain lists")
             console.print()
             list_choice = cyber_prompt("Select list", "1")
         else:
@@ -3718,12 +3979,16 @@ def load_domains_menu():
             if len(available_lists) > 10:
                 print(f"  {C.DIM}... and {len(available_lists) - 10} more files{C.RESET}")
             print(f"\n  {C.BRIGHT_CYAN}[C]{C.RESET} Enter custom file path")
+            print(f"  {C.BRIGHT_RED}[D]{C.RESET} Delete/Modify domain lists")
             print()
             list_choice = get_input("Select list", "1")
 
         # Handle selection
         file_path = None
-        if list_choice and list_choice.lower() == 'c':
+        if list_choice and list_choice.lower() == 'd':
+            _delete_modify_domain_lists(domain_lists_dir, available_lists)
+            return
+        elif list_choice and list_choice.lower() == 'c':
             # Custom path input
             if CYBER_UI_AVAILABLE:
                 console = get_console()
@@ -4072,9 +4337,9 @@ def distributed_scanning_menu():
         scanning_count = sum(1 for w in workers if w.status == "scanning")
         error_count = sum(1 for w in workers if w.status == "error")
 
-        # Total domains across workers
+        # Total domains across workers (cap completed to assigned per-worker to avoid stale data issues)
         total_assigned = sum(w.assigned_domains for w in workers)
-        total_completed = sum(w.completed_domains for w in workers)
+        total_completed = sum(min(w.completed_domains, w.assigned_domains) for w in workers)
 
         # Aborted domains
         aborted_count = len(config.aborted_domains)
@@ -4198,6 +4463,12 @@ def distributed_scanning_menu():
             menu_text.append("  [V] ", style="bold #ffe66d")
             menu_text.append("View Aborted Domains    ", style="white")
             menu_text.append("Domains that timed out or failed\n", style="#888888")
+            menu_text.append("  [F] ", style="bold #ffe66d")
+            menu_text.append("Recover Failed Worker   ", style="white")
+            menu_text.append("Salvage results, redistribute domains\n", style="#888888")
+            menu_text.append("  [U] ", style="bold #95e1d3")
+            menu_text.append("Resume All Workers      ", style="white")
+            menu_text.append("Restart rolling queues for unsubmitted domains\n", style="#888888")
             menu_text.append("  [C] ", style="bold #95e1d3")
             menu_text.append("Collect Results         ", style="white")
             menu_text.append("Download CSVs from all workers\n", style="#888888")
@@ -4270,6 +4541,8 @@ def distributed_scanning_menu():
   {C.RED}[A]{C.RESET} Stop All Scans          Stop scans, restart GUIs for results
   {C.BRIGHT_RED}[B]{C.RESET} Abort All Scans         Kill everything immediately (no restart)
   {C.BRIGHT_YELLOW}[V]{C.RESET} View Aborted Domains    Domains that timed out or failed
+  {C.BRIGHT_YELLOW}[F]{C.RESET} Recover Failed Worker   Salvage results, redistribute domains
+  {C.BRIGHT_GREEN}[U]{C.RESET} Resume All Workers      Restart rolling queues for unsubmitted domains
   {C.BRIGHT_GREEN}[C]{C.RESET} Collect Results         Download CSVs from all workers
   {C.BRIGHT_RED}[G]{C.RESET} GUI Access              SSH tunnel commands for GUIs
   {C.YELLOW}[D]{C.RESET} Debug Worker Logs       View worker scan logs for troubleshooting
@@ -4334,6 +4607,12 @@ def distributed_scanning_menu():
 
         elif choice == 'v':
             _c2_view_aborted_domains(config_manager)
+
+        elif choice == 'f':
+            _c2_recover_worker(config_manager)
+
+        elif choice == 'u':
+            _c2_resume_all_workers(config_manager)
 
         elif choice == 'c':
             _c2_collect_results(config_manager)
@@ -4404,6 +4683,19 @@ def _c2_view_worker_status(config_manager):
                 except Exception as e:
                     console.print(f"[yellow]⚠ Could not verify SpiderFoot status: {e}[/]\n")
 
+            # Fetch live scan progress when SpiderFoot is installed on any worker
+            if any(w.spiderfoot_installed for w in workers):
+                try:
+                    from discovery.distributed import DistributedScanController
+                    controller = DistributedScanController(config_manager)
+                    console.print("[yellow]Fetching live scan progress...[/]")
+                    controller.get_all_progress()
+                    # Re-read workers to get updated progress values
+                    workers = config_manager.config.workers
+                    console.print("[green]✓ Live progress updated[/]\n")
+                except Exception as e:
+                    console.print(f"[yellow]⚠ Could not fetch live progress: {e}[/]\n")
+
             table = Table(title="EC2 Workers", border_style="cyan")
             table.add_column("Nickname", style="cyan")
             table.add_column("Hostname", style="white")
@@ -4419,10 +4711,16 @@ def _c2_view_worker_status(config_manager):
                     "completed": "cyan",
                     "error": "red",
                     "unknown": "dim",
+                    "idle": "dim",
                 }.get(w.status, "white")
 
                 resources = f"{w.ram_gb}GB/{w.cpu_cores}cores" if w.ram_gb else "unknown"
-                progress = f"{w.completed_domains}/{w.assigned_domains}" if w.assigned_domains else "-"
+                if w.assigned_domains:
+                    progress = f"{w.completed_domains}/{w.assigned_domains}"
+                    if w.failed_domains:
+                        progress += f" ({w.failed_domains}F)"
+                else:
+                    progress = "-"
                 sf_status = "[green]Yes[/]" if w.spiderfoot_installed else "[red]No[/]"
 
                 table.add_row(
@@ -4465,15 +4763,102 @@ def _c2_view_worker_status(config_manager):
                 except Exception as e:
                     print(f"{C.YELLOW}⚠ Could not verify SpiderFoot status: {e}{C.RESET}\n")
 
+            # Fetch live scan progress when SpiderFoot is installed on any worker
+            if any(w.spiderfoot_installed for w in workers):
+                try:
+                    from discovery.distributed import DistributedScanController
+                    controller = DistributedScanController(config_manager)
+                    print("Fetching live scan progress...")
+                    controller.get_all_progress()
+                    # Re-read workers to get updated progress values
+                    workers = config_manager.config.workers
+                    print(f"{C.GREEN}✓ Live progress updated{C.RESET}\n")
+                except Exception as e:
+                    print(f"{C.YELLOW}⚠ Could not fetch live progress: {e}{C.RESET}\n")
+
             for w in workers:
                 print(f"\n  {C.CYAN}{w.nickname or w.hostname}{C.RESET}")
                 print(f"    Host: {w.hostname}")
                 print(f"    Status: {w.status}")
                 print(f"    Resources: {w.ram_gb}GB / {w.cpu_cores} cores" if w.ram_gb else "    Resources: unknown")
                 print(f"    SpiderFoot: {'Installed' if w.spiderfoot_installed else 'Not installed'}")
-                print(f"    Progress: {w.completed_domains}/{w.assigned_domains}" if w.assigned_domains else "    Progress: -")
+                if w.assigned_domains:
+                    prog_str = f"{w.completed_domains}/{w.assigned_domains}"
+                    if w.failed_domains:
+                        prog_str += f" ({w.failed_domains}F)"
+                    print(f"    Progress: {prog_str}")
+                else:
+                    print("    Progress: -")
 
     get_input("\nPress Enter to continue...")
+
+
+def _parse_aws_worker_input(raw_lines):
+    """
+    Parse worker input that may be either:
+    - Tag-paired format: 'worker_3\\tec2-1-2-3-4.compute-1.amazonaws.com' (from updated AWS command)
+    - Plain hostnames: 'ec2-1-2-3-4.compute-1.amazonaws.com' (legacy format)
+
+    Returns:
+        List of (tag_name_or_None, hostname) tuples, sorted by tag name (natural sort)
+    """
+    import re
+
+    results = []
+    for line in raw_lines:
+        line = line.strip()
+        if not line:
+            continue
+
+        # Split input by whitespace/commas — but preserve tab-separated pairs
+        # AWS --output text uses tabs between columns within a row, spaces/tabs between rows
+        # A paired entry looks like: "worker_1\tec2-..." or with spaces: "worker_1 ec2-..."
+        # We detect pairs by checking if a token looks like "worker_N" followed by an ec2 hostname
+
+        # First, split by multiple whitespace/commas (handles both space and tab separated rows)
+        tokens = re.split(r'[,\s]+', line)
+
+        i = 0
+        while i < len(tokens):
+            token = tokens[i].strip()
+            if not token:
+                i += 1
+                continue
+
+            # Check if this token is a tag name (worker_N pattern) followed by a hostname
+            if re.match(r'^worker_\d+$', token, re.IGNORECASE) and i + 1 < len(tokens):
+                next_token = tokens[i + 1].strip()
+                if next_token and '.' in next_token and not re.match(r'^worker_\d+$', next_token, re.IGNORECASE):
+                    # This is a tag + hostname pair
+                    results.append((token, next_token))
+                    i += 2
+                    continue
+
+            # Plain hostname (no tag)
+            if '.' in token:
+                results.append((None, token))
+            i += 1
+
+    # Sort by tag name using natural sort if we have tags
+    has_tags = any(tag is not None for tag, _ in results)
+    if has_tags:
+        def natural_key(pair):
+            tag = pair[0] or ""
+            return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', tag)]
+        results.sort(key=natural_key)
+
+    return results
+
+
+def _get_aws_paired_command(region):
+    """Get the AWS CLI command that returns tag_name + hostname pairs."""
+    return (
+        f'aws ec2 describe-instances '
+        f'--filters "Name=tag:Name,Values=worker_*" "Name=instance-state-name,Values=running" '
+        f'--region {region} '
+        f"--query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value | [0], PublicDnsName]' "
+        f'--output text'
+    )
 
 
 def _c2_add_worker(config_manager):
@@ -4484,64 +4869,55 @@ def _c2_add_worker(config_manager):
         cyber_header("ADD WORKERS")
         console = get_console()
         console.print("[dim]Add multiple EC2 workers at once.[/]")
-        console.print("[dim]Nicknames will be auto-generated (worker_1, worker_2, etc.)[/]\n")
+        console.print("[dim]Nicknames will match your AWS tag names (worker_1, worker_2, etc.)[/]\n")
         region = config_manager.config.aws_region
-        aws_cmd = f'aws ec2 describe-instances --filters "Name=tag:Name,Values=worker_*" "Name=instance-state-name,Values=running" --region {region} --query \'Reservations[].Instances[].PublicDnsName\' --output text'
-        console.print("[bold cyan]TIP:[/] [dim]Run in AWS CloudShell to get hostnames, then paste below:[/]")
+        aws_cmd = _get_aws_paired_command(region)
+        console.print("[bold cyan]TIP:[/] [dim]Run in AWS CloudShell to get hostnames, then paste the output below:[/]")
         console.print(f"[cyan]{aws_cmd}[/]")
-        console.print(f"[dim]The EC2 setup guide names instances worker_1, worker_2, etc. This command[/]")
-        console.print(f"[dim]finds instances matching that pattern. Adjust [bold]Values=worker_*[/dim][dim] if yours differ.[/]")
-        console.print(f"[dim](Change [bold]--region {region}[/dim][dim] if your workers are in a different region)[/]")
-        console.print("[yellow bold]IMPORTANT:[/] [dim]This must be pasted as ONE line in CloudShell.[/]")
-        console.print("[dim]If copy-paste adds line breaks, paste into a text editor first,[/]")
-        console.print("[dim]make sure it's all on one line, then copy that into CloudShell.[/]\n")
+        console.print(f"[dim]Or for a simple hostname list sorted by worker number:[/]")
+        console.print(f"[cyan]{aws_cmd} | sort -V | cut -f2[/]")
+        console.print(f"[dim]Adjust [bold]Values=worker_*[/dim][dim] if your instances use different tags.[/]")
+        console.print(f"[dim](Change [bold]--region {region}[/dim][dim] if your workers are in a different region)[/]\n")
     else:
         print_section("Add Workers", C.BRIGHT_GREEN)
         print("Add multiple EC2 workers at once.")
-        print("Nicknames will be auto-generated (worker_1, worker_2, etc.)\n")
+        print("Nicknames will match your AWS tag names (worker_1, worker_2, etc.)\n")
         region = config_manager.config.aws_region
-        aws_cmd = f'aws ec2 describe-instances --filters "Name=tag:Name,Values=worker_*" "Name=instance-state-name,Values=running" --region {region} --query \'Reservations[].Instances[].PublicDnsName\' --output text'
-        print(f"{C.CYAN}TIP:{C.RESET} Run in AWS CloudShell to get hostnames, then paste below:")
+        aws_cmd = _get_aws_paired_command(region)
+        print(f"{C.CYAN}TIP:{C.RESET} Run in AWS CloudShell to get hostnames, then paste the output below:")
         print(f"{C.CYAN}{aws_cmd}{C.RESET}")
-        print(f"{C.DIM}The EC2 setup guide names instances worker_1, worker_2, etc. This command")
-        print(f"finds instances matching that pattern. Adjust Values=worker_* if yours differ.")
-        print(f"(Change --region {region} if your workers are in a different region)")
-        print(f"{C.BRIGHT_YELLOW}IMPORTANT:{C.RESET} {C.DIM}This must be pasted as ONE line in CloudShell.")
-        print(f"If copy-paste adds line breaks, paste into a text editor first,")
-        print(f"make sure it's all on one line, then copy that into CloudShell.{C.RESET}\n")
+        print(f"{C.DIM}Or for a simple hostname list sorted by worker number:")
+        print(f"{C.CYAN}{aws_cmd} | sort -V | cut -f2{C.RESET}")
+        print(f"{C.DIM}Adjust Values=worker_* if your instances use different tags.")
+        print(f"(Change --region {region} if your workers are in a different region){C.RESET}\n")
 
     # Get username first (applies to all)
     username = get_input("Username for all workers (default: kali)")
     username = username.strip() if username else "kali"
 
     if CYBER_UI_AVAILABLE:
-        console.print(f"\n[dim]Enter hostnames - one per line, or comma/space separated.[/]")
-        console.print("[dim]Example: ec2-54-211-76-29.compute-1.amazonaws.com[/]")
-        console.print("[dim]Press Enter twice when done.[/]\n")
+        console.print(f"\n[dim]Paste the AWS output below (all lines at once, or one per line).[/]")
+        console.print("[dim]Press Enter on an empty line when done.[/]\n")
     else:
-        print(f"\nEnter hostnames - one per line, or comma/space separated.")
-        print("Example: ec2-54-211-76-29.compute-1.amazonaws.com")
-        print("Press Enter twice when done.\n")
+        print(f"\nPaste the AWS output below (all lines at once, or one per line).")
+        print("Press Enter on an empty line when done.\n")
 
-    # Collect hostnames (support multi-line input)
-    hostnames = []
+    # Collect hostnames (supports multi-line paste)
+    raw_lines = []
     while True:
-        line = get_input("Hostname")
+        line = get_input("Hostname", allow_multiline=True)
         if line is None:
             break
         line = line.strip()
         if not line:
             break  # Empty line = done
+        # Split multi-line paste into individual lines
+        sublines = [s.strip() for s in line.split('\n') if s.strip()]
+        raw_lines.extend(sublines)
+        if len(sublines) > 1:
+            break  # Got bulk paste, done collecting
 
-        # Split by comma or whitespace
-        import re
-        parts = re.split(r'[,\s]+', line)
-        for part in parts:
-            part = part.strip()
-            if part:
-                hostnames.append(part)
-
-    if not hostnames:
+    if not raw_lines:
         if CYBER_UI_AVAILABLE:
             cyber_info("No hostnames entered.")
         else:
@@ -4549,7 +4925,26 @@ def _c2_add_worker(config_manager):
         get_input("\nPress Enter to continue...")
         return
 
-    # Find next worker number for auto-naming
+    # Parse input — handles both "worker_N hostname" pairs and plain hostnames
+    parsed = _parse_aws_worker_input(raw_lines)
+
+    if not parsed:
+        if CYBER_UI_AVAILABLE:
+            cyber_info("No valid hostnames found in input.")
+        else:
+            print_info("No valid hostnames found in input.")
+        get_input("\nPress Enter to continue...")
+        return
+
+    has_tags = any(tag is not None for tag, _ in parsed)
+
+    if has_tags:
+        if CYBER_UI_AVAILABLE:
+            console.print(f"[green]Detected {len(parsed)} workers with AWS tag names.[/]\n")
+        else:
+            print(f"Detected {len(parsed)} workers with AWS tag names.\n")
+
+    # Find next worker number for auto-naming (only used for plain hostname input)
     existing_workers = config_manager.config.workers
     existing_nums = []
     for w in existing_workers:
@@ -4564,12 +4959,16 @@ def _c2_add_worker(config_manager):
     # Add each worker
     added = 0
     skipped = 0
-    for hostname in hostnames:
-        nickname = f"worker_{next_num}"
+    for tag_name, hostname in parsed:
+        # Use AWS tag name if available, otherwise auto-generate
+        if tag_name:
+            nickname = tag_name
+        else:
+            nickname = f"worker_{next_num}"
+            next_num += 1
         try:
             config_manager.add_worker(hostname, username, nickname)
             added += 1
-            next_num += 1
             if CYBER_UI_AVAILABLE:
                 console.print(f"  [green]✓[/] {nickname}: {hostname}")
             else:
@@ -4611,6 +5010,11 @@ def _c2_replace_worker_addresses(config_manager):
         get_input("\nPress Enter to continue...")
         return
 
+    sorted_workers = sorted(
+        workers,
+        key=lambda w: config_manager._extract_worker_num(w.nickname)
+    )
+
     if CYBER_UI_AVAILABLE:
         cyber_header("REPLACE WORKER ADDRESSES")
         console = get_console()
@@ -4619,7 +5023,7 @@ def _c2_replace_worker_addresses(config_manager):
 
         console.print(Panel(
             "[white]When you stop and restart EC2 instances, their public DNS\n"
-            "addresses change. Use this to update all worker addresses at once\n"
+            "addresses change. Use this to update worker addresses\n"
             "while keeping nicknames, ports, and all other settings intact.[/]\n\n"
             "[dim]Your SpiderFoot installations and scan data are preserved on\n"
             "the instances — no need to re-run setup after replacing addresses.[/]",
@@ -4628,82 +5032,186 @@ def _c2_replace_worker_addresses(config_manager):
         ))
         console.print()
 
-        # Show current workers
         console.print("[bold white]Current workers:[/]")
         table = Table(show_header=True, box=None, padding=(0, 2))
         table.add_column("#", style="dim", width=4)
         table.add_column("Nickname", style="cyan", width=12)
         table.add_column("Current Hostname", style="white")
-
-        sorted_workers = sorted(
-            workers,
-            key=lambda w: config_manager._extract_worker_num(w.nickname)
-        )
         for i, w in enumerate(sorted_workers, 1):
             table.add_row(str(i), w.nickname or "—", w.hostname)
         console.print(table)
         console.print()
 
-        region = config_manager.config.aws_region
-        aws_cmd = f'aws ec2 describe-instances --filters "Name=tag:Name,Values=worker_*" "Name=instance-state-name,Values=running" --region {region} --query \'Reservations[].Instances[].PublicDnsName\' --output text'
-        console.print(f"[bold cyan]Paste {len(workers)} new hostnames below.[/]")
-        console.print("[dim]Run this in AWS CloudShell to get updated addresses:[/]")
-        console.print(f"[cyan]{aws_cmd}[/]")
-        console.print(f"[dim]The EC2 setup guide names instances worker_1, worker_2, etc. This command[/]")
-        console.print(f"[dim]finds instances matching that pattern. Adjust [bold]Values=worker_*[/dim][dim] if yours differ.[/]")
-        console.print(f"[dim](Change [bold]--region {region}[/dim][dim] if your workers are in a different region)[/]")
-        console.print("[yellow bold]IMPORTANT:[/] [dim]This must be pasted as ONE line in CloudShell.[/]")
-        console.print("[dim]If copy-paste adds line breaks, paste into a text editor first,[/]")
-        console.print("[dim]make sure it's all on one line, then copy that into CloudShell.[/]")
-        console.print("[dim]Paste the output directly — tab, comma, or space separated all work.[/]\n")
+        console.print("[bold white]Replace:[/]")
+        console.print("  [cyan][1][/] Single worker  — update one worker's address")
+        console.print("  [cyan][2][/] All workers    — bulk replace all addresses\n")
     else:
         print_section("Replace Worker Addresses", C.BRIGHT_YELLOW)
         print("When you stop and restart EC2 instances, their public DNS")
-        print("addresses change. Use this to update all worker addresses at once")
+        print("addresses change. Use this to update worker addresses")
         print("while keeping nicknames, ports, and all other settings intact.\n")
         print("Your SpiderFoot installations and scan data are preserved on")
         print("the instances — no need to re-run setup after replacing addresses.\n")
 
-        # Show current workers
         print(f"{C.WHITE}Current workers:{C.RESET}")
-        sorted_workers = sorted(
-            workers,
-            key=lambda w: config_manager._extract_worker_num(w.nickname)
-        )
         for i, w in enumerate(sorted_workers, 1):
             print(f"  {i}. {w.nickname or '—'}: {w.hostname}")
         print()
 
+        print(f"{C.WHITE}Replace:{C.RESET}")
+        print(f"  {C.CYAN}[1]{C.RESET} Single worker  — update one worker's address")
+        print(f"  {C.CYAN}[2]{C.RESET} All workers    — bulk replace all addresses\n")
+
+    mode_choice = get_input("Choice", default="1")
+    if mode_choice is None:
+        return
+    mode_choice = mode_choice.strip()
+
+    # --- Single worker mode ---
+    if mode_choice == "1":
+        worker_choice = get_input("Worker # to update")
+        if worker_choice is None:
+            return
+        try:
+            idx = int(worker_choice.strip()) - 1
+            if idx < 0 or idx >= len(sorted_workers):
+                raise ValueError()
+            target_worker = sorted_workers[idx]
+        except (ValueError, IndexError):
+            if CYBER_UI_AVAILABLE:
+                cyber_error("Invalid selection.")
+            else:
+                print_error("Invalid selection.")
+            get_input("\nPress Enter to continue...")
+            return
+
+        if CYBER_UI_AVAILABLE:
+            console.print(f"\n[dim]Updating [cyan]{target_worker.nickname}[/cyan] (current: {target_worker.hostname})[/]")
+        else:
+            print(f"\nUpdating {target_worker.nickname} (current: {target_worker.hostname})")
+
+        new_hostname = get_input("New hostname")
+        if not new_hostname or not new_hostname.strip():
+            if CYBER_UI_AVAILABLE:
+                cyber_info("No hostname entered. Nothing changed.")
+            else:
+                print_info("No hostname entered. Nothing changed.")
+            get_input("\nPress Enter to continue...")
+            return
+
+        new_hostname = new_hostname.strip()
+        old_hostname = target_worker.hostname
+
+        # Validate new hostname format
+        try:
+            from discovery.worker_config import validate_worker_input
+            validate_worker_input(new_hostname, target_worker.username)
+        except ValueError as e:
+            print_error(f"Invalid hostname: {e}")
+            get_input("\nPress Enter to continue...")
+            return
+
+        if CYBER_UI_AVAILABLE:
+            console.print(f"\n[bold white]Preview:[/]")
+            console.print(f"  [cyan]{target_worker.nickname}[/]: [red]{old_hostname}[/] → [green]{new_hostname}[/]\n")
+        else:
+            print(f"\nPreview:")
+            print(f"  {target_worker.nickname}: {old_hostname} → {new_hostname}\n")
+
+        if not confirm("Apply this change?"):
+            if CYBER_UI_AVAILABLE:
+                cyber_info("Cancelled. No changes made.")
+            else:
+                print_info("Cancelled. No changes made.")
+            get_input("\nPress Enter to continue...")
+            return
+
+        target_worker.hostname = new_hostname
+        # Reset stale data from old instance
+        target_worker.completed_domains = 0
+        target_worker.failed_domains = 0
+        target_worker.assigned_domains = 0
+        target_worker.spiderfoot_installed = False
+        target_worker.status = "idle"
+        config_manager.save_config()
+
+        # Verify the save by reading back from config
+        saved_worker = config_manager.get_worker(new_hostname)
+        if saved_worker:
+            verify_msg = f"Verified: config saved with hostname {saved_worker.hostname}"
+        else:
+            # Try to find by nickname as fallback verification
+            verify_msg = f"Warning: could not verify save (lookup by new hostname failed)"
+            # Check if old hostname still exists
+            old_check = config_manager.get_worker(old_hostname)
+            if old_check:
+                verify_msg += f" — old hostname still in config!"
+
+        if CYBER_UI_AVAILABLE:
+            console.print()
+            cyber_success(f"Updated {target_worker.nickname}: {new_hostname}")
+            console.print(f"[dim]{verify_msg}[/]")
+            console.print(f"\n[dim]Scan counters reset for {target_worker.nickname}.[/]")
+            console.print(f"[dim]Config file: {config_manager.config_file}[/]")
+            console.print(f"[yellow]Tip:[/] [dim]If this is a new instance, run [cyan][5] Setup Workers[/cyan] to install SpiderFoot.[/]")
+            console.print(f"[dim]If you only stopped/started (same EBS), SpiderFoot is still installed — just start the GUI.[/]")
+        else:
+            print()
+            print_success(f"Updated {target_worker.nickname}: {new_hostname}")
+            print(f"  {verify_msg}")
+            print(f"\nScan counters reset for {target_worker.nickname}.")
+            print(f"Config file: {config_manager.config_file}")
+            print(f"{C.YELLOW}Tip:{C.RESET} If this is a new instance, run [5] Setup Workers to install SpiderFoot.")
+            print("If you only stopped/started (same EBS), SpiderFoot is still installed — just start the GUI.")
+        get_input("\nPress Enter to continue...")
+        return
+
+    elif mode_choice != "2":
+        if CYBER_UI_AVAILABLE:
+            cyber_error("Invalid choice.")
+        else:
+            print_error("Invalid choice.")
+        get_input("\nPress Enter to continue...")
+        return
+
+    # --- Bulk replace mode (original flow) ---
+    if CYBER_UI_AVAILABLE:
         region = config_manager.config.aws_region
-        aws_cmd = f'aws ec2 describe-instances --filters "Name=tag:Name,Values=worker_*" "Name=instance-state-name,Values=running" --region {region} --query \'Reservations[].Instances[].PublicDnsName\' --output text'
-        print(f"{C.CYAN}Paste {len(workers)} new hostnames below.{C.RESET}")
+        aws_cmd = _get_aws_paired_command(region)
+        console.print(f"\n[bold cyan]Paste {len(workers)} new hostnames below.[/]")
+        console.print("[dim]Run this in AWS CloudShell to get updated addresses:[/]")
+        console.print(f"[cyan]{aws_cmd}[/]")
+        console.print(f"[dim]Or for a simple hostname list sorted by worker number:[/]")
+        console.print(f"[cyan]{aws_cmd} | sort -V | cut -f2[/]")
+        console.print(f"[dim]Adjust [bold]Values=worker_*[/dim][dim] if your instances use different tags.[/]")
+        console.print(f"[dim](Change [bold]--region {region}[/dim][dim] if your workers are in a different region)[/]\n")
+    else:
+        region = config_manager.config.aws_region
+        aws_cmd = _get_aws_paired_command(region)
+        print(f"\n{C.CYAN}Paste {len(workers)} new hostnames below.{C.RESET}")
         print(f"{C.DIM}Run this in AWS CloudShell to get updated addresses:{C.RESET}")
         print(f"{C.CYAN}{aws_cmd}{C.RESET}")
-        print(f"{C.DIM}The EC2 setup guide names instances worker_1, worker_2, etc. This command")
-        print(f"finds instances matching that pattern. Adjust Values=worker_* if yours differ.")
-        print(f"(Change --region {region} if your workers are in a different region)")
-        print(f"{C.BRIGHT_YELLOW}IMPORTANT:{C.RESET} {C.DIM}This must be pasted as ONE line in CloudShell.")
-        print(f"If copy-paste adds line breaks, paste into a text editor first,")
-        print(f"make sure it's all on one line, then copy that into CloudShell.")
-        print(f"Paste the output directly — tab, comma, or space separated all work.{C.RESET}\n")
+        print(f"{C.DIM}Or for a simple hostname list sorted by worker number:")
+        print(f"{C.CYAN}{aws_cmd} | sort -V | cut -f2{C.RESET}")
+        print(f"{C.DIM}Adjust Values=worker_* if your instances use different tags.")
+        print(f"(Change --region {region} if your workers are in a different region){C.RESET}\n")
 
-    # Collect new hostnames
-    import re
-    new_hostnames = []
+    # Collect input (supports multi-line paste)
+    raw_lines = []
     while True:
-        line = get_input("Hostname")
+        line = get_input("Hostname", allow_multiline=True)
         if line is None:
             break
         line = line.strip()
         if not line:
             break
-        parts = re.split(r'[,\s\t]+', line)
-        for part in parts:
-            part = part.strip()
-            if part:
-                new_hostnames.append(part)
+        # Split multi-line paste into individual lines
+        sublines = [s.strip() for s in line.split('\n') if s.strip()]
+        raw_lines.extend(sublines)
+        if len(sublines) > 1:
+            break  # Got bulk paste, done collecting
 
-    if not new_hostnames:
+    if not raw_lines:
         if CYBER_UI_AVAILABLE:
             cyber_info("No hostnames entered. Nothing changed.")
         else:
@@ -4711,90 +5219,210 @@ def _c2_replace_worker_addresses(config_manager):
         get_input("\nPress Enter to continue...")
         return
 
-    # Validate count matches
-    if len(new_hostnames) != len(workers):
+    # Parse input — handles both "worker_N hostname" pairs and plain hostnames
+    parsed = _parse_aws_worker_input(raw_lines)
+
+    if not parsed:
         if CYBER_UI_AVAILABLE:
-            cyber_error(
-                f"Count mismatch: pasted {len(new_hostnames)} hostnames "
-                f"but have {len(workers)} workers."
-            )
-            console.print("[dim]Counts must match exactly. No changes made.[/]")
+            cyber_info("No valid hostnames found in input.")
         else:
-            print_error(
-                f"Count mismatch: pasted {len(new_hostnames)} hostnames "
-                f"but have {len(workers)} workers."
-            )
-            print("Counts must match exactly. No changes made.")
+            print_info("No valid hostnames found in input.")
         get_input("\nPress Enter to continue...")
         return
 
-    # Show preview
-    if CYBER_UI_AVAILABLE:
-        console.print("[bold white]Preview of changes:[/]\n")
-        preview_table = Table(show_header=True, box=None, padding=(0, 2))
-        preview_table.add_column("Worker", style="cyan", width=12)
-        preview_table.add_column("Old Address", style="red")
-        preview_table.add_column("", style="dim", width=3)
-        preview_table.add_column("New Address", style="green")
+    has_tags = any(tag is not None for tag, _ in parsed)
 
-        for w, new_h in zip(sorted_workers, new_hostnames):
-            changed = w.hostname.lower() != new_h.strip().lower()
-            arrow = "→" if changed else "="
-            new_style = "green" if changed else "dim"
-            preview_table.add_row(
-                w.nickname or "—",
-                w.hostname,
-                arrow,
-                f"[{new_style}]{new_h.strip()}[/]"
-            )
-        console.print(preview_table)
-        console.print()
-    else:
-        print(f"\n{C.WHITE}Preview of changes:{C.RESET}\n")
-        for w, new_h in zip(sorted_workers, new_hostnames):
-            changed = w.hostname.lower() != new_h.strip().lower()
-            arrow = "→" if changed else "="
-            print(f"  {w.nickname or '—'}: {w.hostname} {arrow} {new_h.strip()}")
-        print()
+    if has_tags:
+        # Tag-based matching: match each parsed tag to a worker nickname
+        tag_to_hostname = {tag: hostname for tag, hostname in parsed if tag}
 
-    # Confirm
-    confirm_result = confirm("Apply these changes?")
-    if not confirm_result:
+        # Build the mapping: for each worker, find its new hostname by tag name
+        changes_preview = []
+        unmatched_workers = []
+        unmatched_tags = set(tag_to_hostname.keys())
+
+        for w in sorted_workers:
+            nickname = w.nickname or ""
+            if nickname in tag_to_hostname:
+                new_h = tag_to_hostname[nickname]
+                unmatched_tags.discard(nickname)
+                changes_preview.append((w, new_h))
+            else:
+                unmatched_workers.append(w)
+                changes_preview.append((w, None))  # No match
+
+        # Warn about mismatches
+        if unmatched_workers:
+            if CYBER_UI_AVAILABLE:
+                console.print(f"[yellow]Warning: {len(unmatched_workers)} worker(s) have no matching AWS tag:[/]")
+                for w in unmatched_workers:
+                    console.print(f"  [yellow]• {w.nickname} (keeping current: {w.hostname})[/]")
+                console.print()
+            else:
+                print(f"Warning: {len(unmatched_workers)} worker(s) have no matching AWS tag:")
+                for w in unmatched_workers:
+                    print(f"  • {w.nickname} (keeping current: {w.hostname})")
+                print()
+
+        if unmatched_tags:
+            if CYBER_UI_AVAILABLE:
+                console.print(f"[yellow]Warning: {len(unmatched_tags)} AWS tag(s) don't match any worker:[/]")
+                for tag in sorted(unmatched_tags):
+                    console.print(f"  [yellow]• {tag}: {tag_to_hostname[tag]}[/]")
+                console.print()
+            else:
+                print(f"Warning: {len(unmatched_tags)} AWS tag(s) don't match any worker:")
+                for tag in sorted(unmatched_tags):
+                    print(f"  • {tag}: {tag_to_hostname[tag]}")
+                print()
+
+        # Show preview
         if CYBER_UI_AVAILABLE:
-            cyber_info("Cancelled. No changes made.")
-        else:
-            print_info("Cancelled. No changes made.")
-        get_input("\nPress Enter to continue...")
-        return
+            console.print("[bold white]Preview of changes (matched by tag name):[/]\n")
+            preview_table = Table(show_header=True, box=None, padding=(0, 2))
+            preview_table.add_column("Worker", style="cyan", width=12)
+            preview_table.add_column("Old Address", style="red")
+            preview_table.add_column("", style="dim", width=3)
+            preview_table.add_column("New Address", style="green")
 
-    # Apply changes
-    try:
-        changes = config_manager.replace_worker_hostnames(new_hostnames)
-        changed_count = sum(1 for _, old, new in changes if old.lower() != new.lower())
-
-        if CYBER_UI_AVAILABLE:
-            console.print()
-            for nickname, old_h, new_h in changes:
-                if old_h.lower() != new_h.lower():
-                    console.print(f"  [green]✓[/] {nickname}: [red]{old_h}[/] → [green]{new_h}[/]")
+            for w, new_h in changes_preview:
+                if new_h is None:
+                    preview_table.add_row(w.nickname or "—", w.hostname, "=", f"[dim]{w.hostname} (no match)[/]")
                 else:
-                    console.print(f"  [dim]=[/] {nickname}: [dim]unchanged[/]")
+                    changed = w.hostname.lower() != new_h.strip().lower()
+                    arrow = "→" if changed else "="
+                    new_style = "green" if changed else "dim"
+                    preview_table.add_row(w.nickname or "—", w.hostname, arrow, f"[{new_style}]{new_h.strip()}[/]")
+            console.print(preview_table)
+            console.print()
+        else:
+            print(f"\n{C.WHITE}Preview of changes (matched by tag name):{C.RESET}\n")
+            for w, new_h in changes_preview:
+                if new_h is None:
+                    print(f"  {w.nickname or '—'}: {w.hostname} = {w.hostname} (no match)")
+                else:
+                    changed = w.hostname.lower() != new_h.strip().lower()
+                    arrow = "→" if changed else "="
+                    print(f"  {w.nickname or '—'}: {w.hostname} {arrow} {new_h.strip()}")
+            print()
+
+        # Confirm
+        confirm_result = confirm("Apply these changes?")
+        if not confirm_result:
+            if CYBER_UI_AVAILABLE:
+                cyber_info("Cancelled. No changes made.")
+            else:
+                print_info("Cancelled. No changes made.")
+            get_input("\nPress Enter to continue...")
+            return
+
+        # Apply changes by tag name
+        changes = []
+        for w, new_h in changes_preview:
+            old_h = w.hostname
+            if new_h is not None:
+                w.hostname = new_h.strip()
+            changes.append((w.nickname or w.hostname, old_h, w.hostname))
+        config_manager.save_config()
+
+        changed_count = sum(1 for _, old, new in changes if old.lower() != new.lower())
+        if CYBER_UI_AVAILABLE:
             console.print()
             cyber_success(f"Updated {changed_count} of {len(changes)} worker addresses")
         else:
             print()
-            for nickname, old_h, new_h in changes:
-                if old_h.lower() != new_h.lower():
-                    print(f"  ✓ {nickname}: {old_h} → {new_h}")
-                else:
-                    print(f"  = {nickname}: unchanged")
-            print()
             print_success(f"Updated {changed_count} of {len(changes)} worker addresses")
-    except ValueError as e:
+
+    else:
+        # Plain hostnames (no tags) — use positional mapping with warning
+        new_hostnames = [hostname for _, hostname in parsed]
+
         if CYBER_UI_AVAILABLE:
-            cyber_error(str(e))
+            console.print("[yellow]Warning: No tag names detected in input. Using positional matching.[/]")
+            console.print("[dim]For reliable matching, use the AWS command above which includes tag names.[/]\n")
         else:
-            print_error(str(e))
+            print(f"{C.YELLOW}Warning: No tag names detected in input. Using positional matching.{C.RESET}")
+            print("For reliable matching, use the AWS command above which includes tag names.\n")
+
+        # Validate count matches
+        if len(new_hostnames) != len(workers):
+            if CYBER_UI_AVAILABLE:
+                cyber_error(
+                    f"Count mismatch: pasted {len(new_hostnames)} hostnames "
+                    f"but have {len(workers)} workers."
+                )
+                console.print("[dim]Counts must match exactly. No changes made.[/]")
+            else:
+                print_error(
+                    f"Count mismatch: pasted {len(new_hostnames)} hostnames "
+                    f"but have {len(workers)} workers."
+                )
+                print("Counts must match exactly. No changes made.")
+            get_input("\nPress Enter to continue...")
+            return
+
+        # Show preview
+        if CYBER_UI_AVAILABLE:
+            console.print("[bold white]Preview of changes (positional — may not match AWS tags!):[/]\n")
+            preview_table = Table(show_header=True, box=None, padding=(0, 2))
+            preview_table.add_column("Worker", style="cyan", width=12)
+            preview_table.add_column("Old Address", style="red")
+            preview_table.add_column("", style="dim", width=3)
+            preview_table.add_column("New Address", style="green")
+
+            for w, new_h in zip(sorted_workers, new_hostnames):
+                changed = w.hostname.lower() != new_h.strip().lower()
+                arrow = "→" if changed else "="
+                new_style = "green" if changed else "dim"
+                preview_table.add_row(w.nickname or "—", w.hostname, arrow, f"[{new_style}]{new_h.strip()}[/]")
+            console.print(preview_table)
+            console.print()
+        else:
+            print(f"\n{C.WHITE}Preview of changes (positional — may not match AWS tags!):{C.RESET}\n")
+            for w, new_h in zip(sorted_workers, new_hostnames):
+                changed = w.hostname.lower() != new_h.strip().lower()
+                arrow = "→" if changed else "="
+                print(f"  {w.nickname or '—'}: {w.hostname} {arrow} {new_h.strip()}")
+            print()
+
+        # Confirm
+        confirm_result = confirm("Apply these changes?")
+        if not confirm_result:
+            if CYBER_UI_AVAILABLE:
+                cyber_info("Cancelled. No changes made.")
+            else:
+                print_info("Cancelled. No changes made.")
+            get_input("\nPress Enter to continue...")
+            return
+
+        # Apply changes
+        try:
+            changes = config_manager.replace_worker_hostnames(new_hostnames)
+            changed_count = sum(1 for _, old, new in changes if old.lower() != new.lower())
+
+            if CYBER_UI_AVAILABLE:
+                console.print()
+                for nickname, old_h, new_h in changes:
+                    if old_h.lower() != new_h.lower():
+                        console.print(f"  [green]✓[/] {nickname}: [red]{old_h}[/] → [green]{new_h}[/]")
+                    else:
+                        console.print(f"  [dim]=[/] {nickname}: [dim]unchanged[/]")
+                console.print()
+                cyber_success(f"Updated {changed_count} of {len(changes)} worker addresses")
+            else:
+                print()
+                for nickname, old_h, new_h in changes:
+                    if old_h.lower() != new_h.lower():
+                        print(f"  ✓ {nickname}: {old_h} → {new_h}")
+                    else:
+                        print(f"  = {nickname}: unchanged")
+                print()
+                print_success(f"Updated {changed_count} of {len(changes)} worker addresses")
+        except ValueError as e:
+            if CYBER_UI_AVAILABLE:
+                cyber_error(str(e))
+            else:
+                print_error(str(e))
 
     get_input("\nPress Enter to continue...")
 
@@ -5276,8 +5904,8 @@ def _c2_setup_workers(config_manager):
         get_input("\nPress Enter to continue...")
         return
 
-    workers = config_manager.get_enabled_workers()
-    if not workers:
+    all_workers = config_manager.get_enabled_workers()
+    if not all_workers:
         if CYBER_UI_AVAILABLE:
             cyber_error("No workers configured. Use option [2] to add workers.")
         else:
@@ -5285,11 +5913,81 @@ def _c2_setup_workers(config_manager):
         get_input("\nPress Enter to continue...")
         return
 
+    sorted_workers = sorted(
+        all_workers,
+        key=lambda w: config_manager._extract_worker_num(w.nickname)
+    )
+
     if CYBER_UI_AVAILABLE:
         cyber_header("SETUP WORKERS")
         console = get_console()
+        from rich.table import Table
 
-        console.print(f"[dim]This will run on [white]{len(workers)}[/] workers:[/]")
+        console.print("[dim]Setup installs SpiderFoot and dependencies on workers.[/]\n")
+        console.print("[bold white]Workers:[/]")
+        table = Table(show_header=True, box=None, padding=(0, 2))
+        table.add_column("#", style="dim", width=4)
+        table.add_column("Nickname", style="cyan", width=12)
+        table.add_column("Hostname", style="white")
+        table.add_column("SF", style="dim", width=4)
+        for i, w in enumerate(sorted_workers, 1):
+            sf = "Yes" if w.spiderfoot_installed else "No"
+            sf_style = "green" if w.spiderfoot_installed else "red"
+            table.add_row(str(i), w.nickname or "—", w.hostname, f"[{sf_style}]{sf}[/]")
+        console.print(table)
+        console.print()
+
+        console.print("[bold white]Setup:[/]")
+        console.print("  [cyan][1][/] Single worker  — setup one specific worker")
+        console.print("  [cyan][2][/] All workers    — setup all workers\n")
+    else:
+        print_section("Setup Workers", C.BRIGHT_BLUE)
+
+        print("Setup installs SpiderFoot and dependencies on workers.\n")
+        print(f"{C.WHITE}Workers:{C.RESET}")
+        for i, w in enumerate(sorted_workers, 1):
+            sf = "Yes" if w.spiderfoot_installed else "No"
+            print(f"  {i}. {w.nickname or '—'}: {w.hostname} (SF: {sf})")
+        print()
+
+        print(f"{C.WHITE}Setup:{C.RESET}")
+        print(f"  {C.CYAN}[1]{C.RESET} Single worker  — setup one specific worker")
+        print(f"  {C.CYAN}[2]{C.RESET} All workers    — setup all workers\n")
+
+    mode_choice = get_input("Choice", default="1")
+    if mode_choice is None:
+        return
+    mode_choice = mode_choice.strip()
+
+    if mode_choice == "1":
+        worker_choice = get_input("Worker # to setup")
+        if worker_choice is None:
+            return
+        try:
+            idx = int(worker_choice.strip()) - 1
+            if idx < 0 or idx >= len(sorted_workers):
+                raise ValueError()
+            target_workers = [sorted_workers[idx]]
+        except (ValueError, IndexError):
+            if CYBER_UI_AVAILABLE:
+                cyber_error("Invalid selection.")
+            else:
+                print_error("Invalid selection.")
+            get_input("\nPress Enter to continue...")
+            return
+    elif mode_choice == "2":
+        target_workers = sorted_workers
+    else:
+        if CYBER_UI_AVAILABLE:
+            cyber_error("Invalid choice.")
+        else:
+            print_error("Invalid choice.")
+        get_input("\nPress Enter to continue...")
+        return
+
+    worker_names = ", ".join(w.nickname or w.hostname for w in target_workers)
+    if CYBER_UI_AVAILABLE:
+        console.print(f"\n[dim]Will setup {len(target_workers)} worker(s): {worker_names}[/]")
         console.print("[dim]  • apt update && apt full-upgrade[/]")
         console.print("[dim]  • Install tmux[/]")
         console.print("[dim]  • Clone & install SpiderFoot[/]")
@@ -5298,9 +5996,7 @@ def _c2_setup_workers(config_manager):
         if not cyber_confirm("Proceed with setup?"):
             return
     else:
-        print_section("Setup Workers", C.BRIGHT_BLUE)
-
-        print(f"This will run on {len(workers)} workers:")
+        print(f"\nWill setup {len(target_workers)} worker(s): {worker_names}")
         print("  • apt update && apt full-upgrade")
         print("  • Install tmux")
         print("  • Clone & install SpiderFoot")
@@ -5333,7 +6029,8 @@ def _c2_setup_workers(config_manager):
             print("Testing connections...")
 
         validation = controller.validate_workers(
-            lambda h, s: on_progress(f"  {h}: {s}")
+            lambda h, s: on_progress(f"  {h}: {s}"),
+            workers=target_workers
         )
 
         failed = [h for h, (ok, _) in validation.items() if not ok]
@@ -5352,7 +6049,8 @@ def _c2_setup_workers(config_manager):
             print("\nDetecting resources...")
 
         resources = controller.detect_all_resources(
-            lambda h, s: on_progress(f"  {h}: {s}")
+            lambda h, s: on_progress(f"  {h}: {s}"),
+            workers=target_workers
         )
 
         # Run full setup
@@ -5361,15 +6059,15 @@ def _c2_setup_workers(config_manager):
         else:
             print("\nInstalling software (this may take 10-15 minutes)...\n")
 
-        results = controller.setup_all_workers(on_progress)
+        results = controller.setup_all_workers(on_progress, workers=target_workers)
 
         # Summary
         success_count = sum(1 for r in results.values() if r.success)
 
         if CYBER_UI_AVAILABLE:
-            console.print(f"\n[bold green]Setup complete: {success_count}/{len(workers)} workers ready[/]")
+            console.print(f"\n[bold green]Setup complete: {success_count}/{len(target_workers)} workers ready[/]")
         else:
-            print(f"\nSetup complete: {success_count}/{len(workers)} workers ready")
+            print(f"\nSetup complete: {success_count}/{len(target_workers)} workers ready")
 
         for hostname, result in results.items():
             if not result.success:
@@ -5777,6 +6475,11 @@ def _c2_auto_refresh_loop(config_manager, controller, interval_minutes):
     interval_seconds = interval_minutes * 60
     last_refresh = time.time()
 
+    # Check if stdin is a TTY (not available in CI/CD or backgrounded processes)
+    if not sys.stdin.isatty():
+        print_info("Auto-refresh not available in non-TTY mode.")
+        return
+
     # Save terminal settings
     old_settings = termios.tcgetattr(sys.stdin)
 
@@ -5880,8 +6583,10 @@ def _c2_check_progress(config_manager):
                 interval = int(interval_str) if interval_str and interval_str.strip() else 5
                 if interval < 1:
                     interval = 1
+                    print_info("Interval clamped to minimum of 1 minute")
                 elif interval > 60:
                     interval = 60
+                    print_info("Interval clamped to maximum of 60 minutes")
             except ValueError:
                 interval = 5
 
@@ -5891,23 +6596,97 @@ def _c2_check_progress(config_manager):
 
 
 def _c2_stop_all_scans(config_manager):
-    """Stop all running scans and restart GUIs for result access."""
+    """Stop scans and restart GUIs for result access."""
     clear_screen()
 
+    all_workers = config_manager.get_enabled_workers()
+    if not all_workers:
+        if CYBER_UI_AVAILABLE:
+            cyber_error("No workers configured.")
+        else:
+            print_error("No workers configured.")
+        get_input("\nPress Enter to continue...")
+        return
+
+    sorted_workers = sorted(
+        all_workers,
+        key=lambda w: config_manager._extract_worker_num(w.nickname)
+    )
+
     if CYBER_UI_AVAILABLE:
-        cyber_header("STOP ALL SCANS")
+        cyber_header("STOP SCANS")
         console = get_console()
-        console.print("[bold yellow]This will stop all running scans and restart the GUIs.[/]")
+        from rich.table import Table
+
+        console.print("[bold yellow]Stop running scans and restart GUIs for result access.[/]")
         console.print("[dim]Completed scan results will remain accessible via the GUI.[/]\n")
 
-        if not cyber_confirm("Are you sure you want to stop all scans?"):
-            return
+        console.print("[bold white]Workers:[/]")
+        table = Table(show_header=True, box=None, padding=(0, 2))
+        table.add_column("#", style="dim", width=4)
+        table.add_column("Nickname", style="cyan", width=12)
+        table.add_column("Hostname", style="white")
+        table.add_column("Status", style="yellow", width=10)
+        for i, w in enumerate(sorted_workers, 1):
+            status_color = {"scanning": "yellow", "completed": "cyan", "idle": "dim"}.get(w.status, "white")
+            table.add_row(str(i), w.nickname or "—", w.hostname, f"[{status_color}]{w.status}[/]")
+        console.print(table)
+        console.print()
+
+        console.print("[bold white]Stop:[/]")
+        console.print("  [cyan][1][/] Single worker  — stop one specific worker")
+        console.print("  [cyan][2][/] All workers    — stop all workers\n")
     else:
-        print_section("Stop All Scans", C.BRIGHT_RED)
-        print("This will stop all running scans and restart the GUIs.")
+        print_section("Stop Scans", C.BRIGHT_RED)
+        print("Stop running scans and restart GUIs for result access.")
         print("Completed scan results will remain accessible via the GUI.\n")
 
-        if not confirm("Are you sure?"):
+        print(f"{C.WHITE}Workers:{C.RESET}")
+        for i, w in enumerate(sorted_workers, 1):
+            print(f"  {i}. {w.nickname or '—'}: {w.hostname} ({w.status})")
+        print()
+
+        print(f"{C.WHITE}Stop:{C.RESET}")
+        print(f"  {C.CYAN}[1]{C.RESET} Single worker  — stop one specific worker")
+        print(f"  {C.CYAN}[2]{C.RESET} All workers    — stop all workers\n")
+
+    mode_choice = get_input("Choice", default="2")
+    if mode_choice is None:
+        return
+    mode_choice = mode_choice.strip()
+
+    if mode_choice == "1":
+        worker_choice = get_input("Worker # to stop")
+        if worker_choice is None:
+            return
+        try:
+            idx = int(worker_choice.strip()) - 1
+            if idx < 0 or idx >= len(sorted_workers):
+                raise ValueError()
+            target_workers = [sorted_workers[idx]]
+        except (ValueError, IndexError):
+            if CYBER_UI_AVAILABLE:
+                cyber_error("Invalid selection.")
+            else:
+                print_error("Invalid selection.")
+            get_input("\nPress Enter to continue...")
+            return
+    elif mode_choice == "2":
+        target_workers = sorted_workers
+    else:
+        if CYBER_UI_AVAILABLE:
+            cyber_error("Invalid choice.")
+        else:
+            print_error("Invalid choice.")
+        get_input("\nPress Enter to continue...")
+        return
+
+    worker_names = ", ".join(w.nickname or w.hostname for w in target_workers)
+    if CYBER_UI_AVAILABLE:
+        if not cyber_confirm(f"Stop scans on {len(target_workers)} worker(s) ({worker_names})?"):
+            return
+    else:
+        if not confirm(f"Stop scans on {len(target_workers)} worker(s)?"):
             return
 
     try:
@@ -5925,21 +6704,44 @@ def _c2_stop_all_scans(config_manager):
         if CYBER_UI_AVAILABLE:
             console.print()  # Blank line before progress
 
-        results = controller.abort_all_scans(
-            save_aborted=True,
-            restart_gui=True,
-            on_progress=on_progress
-        )
-
-        success_count = sum(1 for ok, _ in results.values() if ok)
+        if len(target_workers) == len(sorted_workers):
+            # All workers — use abort_all_scans which also handles end_session
+            results = controller.abort_all_scans(
+                save_aborted=True,
+                restart_gui=True,
+                on_progress=on_progress
+            )
+            success_count = sum(1 for ok, _ in results.values() if ok)
+        else:
+            # Single worker(s)
+            success_count = 0
+            total = len(target_workers)
+            for i, worker in enumerate(target_workers, 1):
+                if on_progress:
+                    on_progress(f"[{i}/{total}] Stopping {worker.nickname or worker.hostname}...")
+                success, message, _ = controller.abort_worker_scans(
+                    worker.hostname,
+                    save_aborted=True
+                )
+                if success:
+                    success_count += 1
+                    # Restart GUI so results remain accessible
+                    if config_manager.config.scan_mode == "webapi":
+                        try:
+                            controller.start_spiderfoot_web(worker, port=worker.gui_port, force_restart=True)
+                        except Exception:
+                            pass
+                if on_progress:
+                    status = "✓" if success else "✗"
+                    on_progress(f"  {status} {worker.nickname or worker.hostname}")
 
         if CYBER_UI_AVAILABLE:
             console.print()  # Blank line after progress
-            cyber_success(f"Stopped scans and restarted GUIs on {success_count}/{len(results)} workers")
+            cyber_success(f"Stopped scans and restarted GUIs on {success_count}/{len(target_workers)} workers")
             console.print("[dim]You can now access completed results via the GUI tunnels.[/]")
         else:
             print()
-            print_success(f"Stopped scans and restarted GUIs on {success_count}/{len(results)} workers")
+            print_success(f"Stopped scans and restarted GUIs on {success_count}/{len(target_workers)} workers")
             print("You can now access completed results via the GUI tunnels.")
 
     except Exception as e:
@@ -5952,23 +6754,97 @@ def _c2_stop_all_scans(config_manager):
 
 
 def _c2_abort_all_scans(config_manager):
-    """Brute force kill all scans immediately without restarting GUIs."""
+    """Brute force kill scans immediately without restarting GUIs."""
     clear_screen()
 
+    all_workers = config_manager.get_enabled_workers()
+    if not all_workers:
+        if CYBER_UI_AVAILABLE:
+            cyber_error("No workers configured.")
+        else:
+            print_error("No workers configured.")
+        get_input("\nPress Enter to continue...")
+        return
+
+    sorted_workers = sorted(
+        all_workers,
+        key=lambda w: config_manager._extract_worker_num(w.nickname)
+    )
+
     if CYBER_UI_AVAILABLE:
-        cyber_header("ABORT ALL SCANS")
+        cyber_header("ABORT SCANS")
         console = get_console()
-        console.print("[bold red]This will immediately kill all scans and processes.[/]")
+        from rich.table import Table
+
+        console.print("[bold red]Kill all scans and processes immediately.[/]")
         console.print("[dim]GUIs will NOT be restarted. Use this when things are stuck.[/]\n")
 
-        if not cyber_confirm("Are you sure you want to abort all scans?"):
-            return
+        console.print("[bold white]Workers:[/]")
+        table = Table(show_header=True, box=None, padding=(0, 2))
+        table.add_column("#", style="dim", width=4)
+        table.add_column("Nickname", style="cyan", width=12)
+        table.add_column("Hostname", style="white")
+        table.add_column("Status", style="yellow", width=10)
+        for i, w in enumerate(sorted_workers, 1):
+            status_color = {"scanning": "yellow", "completed": "cyan", "idle": "dim"}.get(w.status, "white")
+            table.add_row(str(i), w.nickname or "—", w.hostname, f"[{status_color}]{w.status}[/]")
+        console.print(table)
+        console.print()
+
+        console.print("[bold white]Abort:[/]")
+        console.print("  [cyan][1][/] Single worker  — abort one specific worker")
+        console.print("  [cyan][2][/] All workers    — abort all workers\n")
     else:
-        print_section("Abort All Scans", C.BRIGHT_RED)
-        print("This will immediately kill all scans and processes.")
+        print_section("Abort Scans", C.BRIGHT_RED)
+        print("Kill all scans and processes immediately.")
         print("GUIs will NOT be restarted. Use this when things are stuck.\n")
 
-        if not confirm("Are you sure?"):
+        print(f"{C.WHITE}Workers:{C.RESET}")
+        for i, w in enumerate(sorted_workers, 1):
+            print(f"  {i}. {w.nickname or '—'}: {w.hostname} ({w.status})")
+        print()
+
+        print(f"{C.WHITE}Abort:{C.RESET}")
+        print(f"  {C.CYAN}[1]{C.RESET} Single worker  — abort one specific worker")
+        print(f"  {C.CYAN}[2]{C.RESET} All workers    — abort all workers\n")
+
+    mode_choice = get_input("Choice", default="2")
+    if mode_choice is None:
+        return
+    mode_choice = mode_choice.strip()
+
+    if mode_choice == "1":
+        worker_choice = get_input("Worker # to abort")
+        if worker_choice is None:
+            return
+        try:
+            idx = int(worker_choice.strip()) - 1
+            if idx < 0 or idx >= len(sorted_workers):
+                raise ValueError()
+            target_workers = [sorted_workers[idx]]
+        except (ValueError, IndexError):
+            if CYBER_UI_AVAILABLE:
+                cyber_error("Invalid selection.")
+            else:
+                print_error("Invalid selection.")
+            get_input("\nPress Enter to continue...")
+            return
+    elif mode_choice == "2":
+        target_workers = sorted_workers
+    else:
+        if CYBER_UI_AVAILABLE:
+            cyber_error("Invalid choice.")
+        else:
+            print_error("Invalid choice.")
+        get_input("\nPress Enter to continue...")
+        return
+
+    worker_names = ", ".join(w.nickname or w.hostname for w in target_workers)
+    if CYBER_UI_AVAILABLE:
+        if not cyber_confirm(f"Abort scans on {len(target_workers)} worker(s) ({worker_names})?"):
+            return
+    else:
+        if not confirm(f"Abort scans on {len(target_workers)} worker(s)?"):
             return
 
     try:
@@ -5986,25 +6862,351 @@ def _c2_abort_all_scans(config_manager):
         if CYBER_UI_AVAILABLE:
             console.print()  # Blank line before progress
 
-        results = controller.abort_all_scans(
-            save_aborted=True,
-            restart_gui=False,
-            on_progress=on_progress
-        )
-
-        success_count = sum(1 for ok, _ in results.values() if ok)
+        if len(target_workers) == len(sorted_workers):
+            # All workers — use abort_all_scans which also handles end_session
+            results = controller.abort_all_scans(
+                save_aborted=True,
+                restart_gui=False,
+                on_progress=on_progress
+            )
+            success_count = sum(1 for ok, _ in results.values() if ok)
+        else:
+            # Single worker(s)
+            success_count = 0
+            total = len(target_workers)
+            for i, worker in enumerate(target_workers, 1):
+                if on_progress:
+                    on_progress(f"[{i}/{total}] Aborting {worker.nickname or worker.hostname}...")
+                success, message, _ = controller.abort_worker_scans(
+                    worker.hostname,
+                    save_aborted=True
+                )
+                if success:
+                    success_count += 1
+                if on_progress:
+                    status = "✓" if success else "✗"
+                    on_progress(f"  {status} {worker.nickname or worker.hostname}")
 
         if CYBER_UI_AVAILABLE:
             console.print()  # Blank line after progress
-            cyber_success(f"Aborted scans on {success_count}/{len(results)} workers")
+            cyber_success(f"Aborted scans on {success_count}/{len(target_workers)} workers")
         else:
-            print_success(f"Aborted scans on {success_count}/{len(results)} workers")
+            print_success(f"Aborted scans on {success_count}/{len(target_workers)} workers")
 
     except Exception as e:
         if CYBER_UI_AVAILABLE:
             cyber_error(f"Abort failed: {e}")
         else:
             print_error(f"Abort failed: {e}")
+
+    get_input("\nPress Enter to continue...")
+
+
+def _c2_recover_worker(config_manager):
+    """Recover results from a failed worker and redistribute unfinished domains."""
+    clear_screen()
+
+    if CYBER_UI_AVAILABLE:
+        cyber_header("RECOVER FAILED WORKER")
+        console = get_console()
+    else:
+        print_section("Recover Failed Worker", C.BRIGHT_YELLOW)
+
+    workers = config_manager.get_all_workers()
+    if not workers:
+        msg = "No workers configured."
+        if CYBER_UI_AVAILABLE:
+            cyber_info(msg)
+        else:
+            print_info(msg)
+        get_input("\nPress Enter to continue...")
+        return
+
+    # Show workers with status
+    if CYBER_UI_AVAILABLE:
+        console.print("[dim]Select the worker that failed or needs recovery:[/]\n")
+        for i, w in enumerate(sorted(workers, key=lambda x: config_manager._extract_worker_num(x.nickname)), 1):
+            status_color = "red" if w.status in ("error", "unreachable") else "yellow" if w.status == "scanning" else "green"
+            sf_status = "No" if not w.spiderfoot_installed else "Yes"
+            console.print(f"  [{status_color}]{i}[/] {w.nickname or '—'}: {w.hostname} [dim](status: {w.status or 'unknown'}, SF: {sf_status})[/]")
+        console.print()
+    else:
+        print("Select the worker that failed or needs recovery:\n")
+        sorted_workers = sorted(workers, key=lambda x: config_manager._extract_worker_num(x.nickname))
+        for i, w in enumerate(sorted_workers, 1):
+            print(f"  {i}. {w.nickname or '—'}: {w.hostname} (status: {w.status or 'unknown'})")
+        print()
+
+    sorted_workers = sorted(workers, key=lambda x: config_manager._extract_worker_num(x.nickname))
+
+    choice = get_input("Worker number (or Q to cancel)")
+    if not choice or choice.lower() == 'q':
+        return
+
+    try:
+        idx = int(choice) - 1
+        if idx < 0 or idx >= len(sorted_workers):
+            raise ValueError()
+        worker = sorted_workers[idx]
+    except (ValueError, IndexError):
+        if CYBER_UI_AVAILABLE:
+            cyber_error("Invalid selection.")
+        else:
+            print_error("Invalid selection.")
+        get_input("\nPress Enter to continue...")
+        return
+
+    # Validate SSH key (supports both key file and agent mode)
+    if not config_manager.has_ssh_key():
+        msg = "SSH key not configured. Use option [4] first."
+        if CYBER_UI_AVAILABLE:
+            cyber_error(msg)
+        else:
+            print_error(msg)
+        get_input("\nPress Enter to continue...")
+        return
+
+    # Create controller
+    from discovery.distributed import DistributedScanController
+    controller = DistributedScanController(config_manager)
+
+    output_dir = config_manager.config.master_output_dir or "./distributed_results"
+
+    if CYBER_UI_AVAILABLE:
+        console.print(f"\n[bold]Recovering {worker.nickname}[/] ({worker.hostname})...")
+        console.print("[dim]Checking if worker is reachable...[/]\n")
+    else:
+        print(f"\nRecovering {worker.nickname} ({worker.hostname})...")
+        print("Checking if worker is reachable...\n")
+
+    # Run recovery
+    def progress(msg):
+        if CYBER_UI_AVAILABLE:
+            console.print(f"  [dim]{msg}[/]")
+        else:
+            print(f"  {msg}")
+
+    try:
+        completed, unfinished, downloaded = controller.recover_failed_worker(
+            worker, output_dir, on_progress=progress
+        )
+    except Exception as e:
+        if CYBER_UI_AVAILABLE:
+            cyber_error(f"Recovery failed: {e}")
+        else:
+            print_error(f"Recovery failed: {e}")
+        get_input("\nPress Enter to continue...")
+        return
+
+    # Show summary
+    print()
+    if CYBER_UI_AVAILABLE:
+        console.print(f"[bold green]Completed domains:[/] {len(completed)}")
+        if downloaded > 0:
+            console.print(f"[bold green]Results downloaded:[/] {downloaded} files")
+        console.print(f"[bold yellow]Unfinished domains:[/] {len(unfinished)}")
+        if unfinished:
+            console.print(f"\n[dim]Unfinished domains:[/]")
+            for d in unfinished:
+                console.print(f"  [yellow]•[/] {d}")
+    else:
+        print(f"Completed domains: {len(completed)}")
+        if downloaded > 0:
+            print(f"Results downloaded: {downloaded} files")
+        print(f"Unfinished domains: {len(unfinished)}")
+        if unfinished:
+            print(f"\nUnfinished domains:")
+            for d in unfinished:
+                print(f"  • {d}")
+
+    # Offer redistribution
+    if unfinished:
+        print()
+        redistribute = confirm(f"Redistribute {len(unfinished)} domains to available workers?")
+        if redistribute:
+            # Get intensity from current session or default
+            intensity = "passive"  # Safe default
+            if CYBER_UI_AVAILABLE:
+                console.print(f"\n[dim]Using intensity: {intensity}[/]")
+                console.print("[dim]Starting redistribution...[/]\n")
+            else:
+                print(f"\nUsing intensity: {intensity}")
+                print("Starting redistribution...\n")
+
+            try:
+                success, msg = controller.redistribute_domains(
+                    unfinished, intensity=intensity, on_progress=progress
+                )
+            except Exception as e:
+                if CYBER_UI_AVAILABLE:
+                    cyber_error(f"Redistribution failed: {e}")
+                else:
+                    print_error(f"Redistribution failed: {e}")
+                get_input("\nPress Enter to continue...")
+                return
+
+            print()
+            if success:
+                if CYBER_UI_AVAILABLE:
+                    cyber_success(msg)
+                else:
+                    print_success(msg)
+            else:
+                if CYBER_UI_AVAILABLE:
+                    cyber_error(msg)
+                else:
+                    print_error(msg)
+    elif not completed and not unfinished:
+        msg = "No domain list found for this worker. Was it part of the current scan session?"
+        if CYBER_UI_AVAILABLE:
+            cyber_info(msg)
+        else:
+            print_info(msg)
+
+    get_input("\nPress Enter to continue...")
+
+
+def _c2_resume_all_workers(config_manager):
+    """Resume scanning on all workers — find unsubmitted domains and restart rolling queues."""
+    clear_screen()
+
+    if CYBER_UI_AVAILABLE:
+        cyber_header("RESUME ALL WORKERS")
+        console = get_console()
+    else:
+        print_section("Resume All Workers", C.BRIGHT_CYAN)
+
+    if not config_manager.has_ssh_key():
+        msg = "SSH key not configured. Use option [4] first."
+        if CYBER_UI_AVAILABLE:
+            cyber_error(msg)
+        else:
+            print_error(msg)
+        get_input("\nPress Enter to continue...")
+        return
+
+    workers = config_manager.get_enabled_workers()
+    if not workers:
+        if CYBER_UI_AVAILABLE:
+            cyber_warning("No workers configured.")
+        else:
+            print_warning("No workers configured.")
+        get_input("\nPress Enter to continue...")
+        return
+
+    if CYBER_UI_AVAILABLE:
+        console.print("[dim]This will check all workers and resume any unsubmitted domains.[/]")
+        console.print("[dim]Running and completed scans will NOT be duplicated.[/]\n")
+    else:
+        print("This will check all workers and resume any unsubmitted domains.")
+        print("Running and completed scans will NOT be duplicated.\n")
+
+    # Ask for intensity
+    if CYBER_UI_AVAILABLE:
+        console.print("[bold white]Scan intensity for resumed domains:[/]")
+        console.print("  [cyan][1][/] All modules")
+        console.print("  [cyan][2][/] Footprint")
+        console.print("  [cyan][3][/] Investigate")
+        console.print("  [cyan][4][/] Passive (Recommended)\n")
+    else:
+        print("Scan intensity for resumed domains:")
+        print(f"  {C.CYAN}[1]{C.RESET} All modules")
+        print(f"  {C.CYAN}[2]{C.RESET} Footprint")
+        print(f"  {C.CYAN}[3]{C.RESET} Investigate")
+        print(f"  {C.CYAN}[4]{C.RESET} Passive (Recommended)\n")
+
+    intensity_map = {'1': 'all', '2': 'footprint', '3': 'investigate', '4': 'passive'}
+    intensity_choice = get_input("Intensity", default="4")
+    if intensity_choice is None:
+        return
+    intensity = intensity_map.get(intensity_choice.strip(), "passive")
+
+    if not confirm(f"Resume unsubmitted domains with '{intensity}' intensity?"):
+        if CYBER_UI_AVAILABLE:
+            cyber_info("Cancelled.")
+        else:
+            print_info("Cancelled.")
+        get_input("\nPress Enter to continue...")
+        return
+
+    # Create controller and run resume
+    from discovery.distributed import DistributedScanController
+    controller = DistributedScanController(config_manager)
+
+    def progress(msg):
+        if CYBER_UI_AVAILABLE:
+            console.print(f"  [dim]{msg}[/]")
+        else:
+            print(f"  {msg}")
+
+    if CYBER_UI_AVAILABLE:
+        console.print("\n[bold cyan]Analyzing workers...[/]\n")
+    else:
+        print(f"\n{C.CYAN}Analyzing workers...{C.RESET}\n")
+
+    try:
+        success, message, details = controller.resume_all_workers(
+            intensity=intensity, on_progress=progress
+        )
+    except Exception as e:
+        if CYBER_UI_AVAILABLE:
+            cyber_error(f"Resume failed: {e}")
+        else:
+            print_error(f"Resume failed: {e}")
+        get_input("\nPress Enter to continue...")
+        return
+
+    # Show summary table
+    print()
+    if CYBER_UI_AVAILABLE:
+        from rich.table import Table
+        table = Table(show_header=True, box=None, padding=(0, 2))
+        table.add_column("Worker", style="cyan", width=12)
+        table.add_column("Assigned", style="white", justify="right", width=8)
+        table.add_column("Submitted", style="green", justify="right", width=9)
+        table.add_column("Unsubmitted", style="yellow", justify="right", width=11)
+        table.add_column("Status", style="dim")
+
+        for nickname in sorted(details.keys()):
+            info = details[nickname]
+            status_style = "green" if info.get('unsubmitted', 0) == 0 else "yellow"
+            status_text = info.get('reason', info.get('status', ''))
+            if info.get('status') == 'ok' and info.get('unsubmitted', 0) == 0:
+                status_text = f"all submitted ({info.get('active_scans', 0)} active)"
+            elif info.get('status') == 'ok':
+                status_text = f"resuming ({info.get('active_scans', 0)} active)"
+            table.add_row(
+                nickname,
+                str(info.get('assigned', 0)),
+                str(info.get('submitted', 0)),
+                str(info.get('unsubmitted', 0)),
+                f"[{status_style}]{status_text}[/]"
+            )
+        console.print(table)
+        console.print()
+    else:
+        print(f"{'Worker':<14} {'Assigned':>8} {'Submitted':>9} {'Unsub':>7}  Status")
+        print(f"{'─'*14} {'─'*8} {'─'*9} {'─'*7}  {'─'*20}")
+        for nickname in sorted(details.keys()):
+            info = details[nickname]
+            status_text = info.get('reason', info.get('status', ''))
+            if info.get('status') == 'ok' and info.get('unsubmitted', 0) == 0:
+                status_text = f"all submitted ({info.get('active_scans', 0)} active)"
+            elif info.get('status') == 'ok':
+                status_text = f"resuming ({info.get('active_scans', 0)} active)"
+            print(f"{nickname:<14} {info.get('assigned', 0):>8} {info.get('submitted', 0):>9} {info.get('unsubmitted', 0):>7}  {status_text}")
+        print()
+
+    if success:
+        if CYBER_UI_AVAILABLE:
+            cyber_success(message)
+        else:
+            print_success(message)
+    else:
+        if CYBER_UI_AVAILABLE:
+            cyber_error(message)
+        else:
+            print_error(message)
 
     get_input("\nPress Enter to continue...")
 
@@ -6122,21 +7324,22 @@ def _c2_collect_results(config_manager):
 def _c2_gui_access(config_manager):
     """Show SSH tunnel commands for GUI access and option to start GUI on workers."""
 
-    workers = config_manager.get_enabled_workers()
-
-    if not workers:
-        clear_screen()
-        if CYBER_UI_AVAILABLE:
-            cyber_header("GUI ACCESS")
-            console = get_console()
-            console.print("[yellow]No workers configured.[/]")
-        else:
-            print_section("GUI Access", C.BRIGHT_RED)
-            print_info("No workers configured.")
-        get_input("\nPress Enter to continue...")
-        return
-
     while True:
+        # Reload workers each iteration to pick up address changes
+        workers = config_manager.get_enabled_workers()
+
+        if not workers:
+            clear_screen()
+            if CYBER_UI_AVAILABLE:
+                cyber_header("GUI ACCESS")
+                console = get_console()
+                console.print("[yellow]No workers configured.[/]")
+            else:
+                print_section("GUI Access", C.BRIGHT_RED)
+                print_info("No workers configured.")
+            get_input("\nPress Enter to continue...")
+            return
+
         clear_screen()
 
         if CYBER_UI_AVAILABLE:
@@ -6289,20 +7492,42 @@ def _start_gui_on_worker(config_manager, worker):
     else:
         print(f"Starting SpiderFoot GUI on {worker.get_display_name()}...")
 
-    # Start GUI in background using nohup
-    # Use the worker's configured port and bind to 0.0.0.0 for remote access
+    # Start GUI in tmux session (more reliable than nohup)
     sf_dir = config_manager.config.spiderfoot_install_dir.replace("~", f"/home/{worker.username}")
-    start_cmd = f"cd {sf_dir} && nohup ./venv/bin/python3 sf.py -l 0.0.0.0:{port} > /tmp/sf_gui.log 2>&1 &"
+    start_cmd = (
+        f'tmux kill-session -t sf-web 2>/dev/null || true && '
+        f'tmux new-session -d -s sf-web "cd {sf_dir} && ./venv/bin/python3 sf.py -l 0.0.0.0:{port}" && '
+        f'echo "STARTED"'
+    )
 
-    result = ssh.execute(worker.hostname, worker.username, start_cmd)
+    result = ssh.execute(worker.hostname, worker.username, start_cmd, timeout=30)
 
-    # Give it a moment to start
-    time.sleep(2)
+    if "STARTED" not in (result.stdout or ""):
+        if CYBER_UI_AVAILABLE:
+            console.print(f"[red]✗ Failed to launch tmux session: {result.stderr}[/]")
+        else:
+            print_error(f"Failed to launch tmux session: {result.stderr}")
+        return
 
-    # Check if it's running (HTTP 200 = success)
-    check_result = ssh.execute(worker.hostname, worker.username, f"curl -s -o /dev/null -w '%{{http_code}}' http://127.0.0.1:{port}/ 2>/dev/null || echo '000'")
+    # Retry loop: 15 attempts x 2s = 30s max wait for server to come up
+    if CYBER_UI_AVAILABLE:
+        console.print(f"[dim]Waiting for web server to become ready (up to 30s)...[/]")
+    else:
+        print("Waiting for web server to become ready (up to 30s)...")
 
-    if check_result.stdout.strip() == "200":
+    started = False
+    for attempt in range(15):
+        time.sleep(2)
+        check_result = ssh.execute(
+            worker.hostname, worker.username,
+            f"curl -s -o /dev/null -w '%{{http_code}}' http://127.0.0.1:{port}/ 2>/dev/null || echo '000'",
+            timeout=10
+        )
+        if check_result.stdout.strip() == "200":
+            started = True
+            break
+
+    if started:
         if CYBER_UI_AVAILABLE:
             console.print(f"[green]✓ GUI started successfully on {worker.get_display_name()}![/]")
             console.print(f"[dim]Now run the SSH tunnel command on your local machine to access it.[/]")
@@ -6310,10 +7535,65 @@ def _start_gui_on_worker(config_manager, worker):
             print_success(f"GUI started successfully on {worker.get_display_name()}!")
             print("Now run the SSH tunnel command on your local machine to access it.")
     else:
+        # Fetch logs to show the actual error
         if CYBER_UI_AVAILABLE:
-            console.print(f"[red]✗ Failed to start GUI. Check /tmp/sf_gui.log on the worker.[/]")
+            console.print(f"[red]✗ GUI failed to start within 30s on {worker.get_display_name()}.[/]")
         else:
-            print_error(f"Failed to start GUI. Check /tmp/sf_gui.log on the worker.")
+            print_error(f"GUI failed to start within 30s on {worker.get_display_name()}.")
+
+        # Show tmux output
+        tmux_result = ssh.execute(
+            worker.hostname, worker.username,
+            f"tmux capture-pane -t sf-web -p 2>/dev/null | tail -20",
+            timeout=10
+        )
+        if tmux_result.success and tmux_result.stdout.strip():
+            if CYBER_UI_AVAILABLE:
+                console.print(f"[yellow]tmux session output:[/]")
+                console.print(f"[dim]{tmux_result.stdout.strip()}[/]")
+            else:
+                print(f"tmux session output:")
+                print(tmux_result.stdout.strip())
+
+        # Show log file
+        log_result = ssh.execute(
+            worker.hostname, worker.username,
+            "tail -30 /tmp/sf_gui.log 2>/dev/null || echo 'No log file found'",
+            timeout=10
+        )
+        if log_result.success and log_result.stdout.strip():
+            if CYBER_UI_AVAILABLE:
+                console.print(f"[yellow]Startup log (/tmp/sf_gui.log):[/]")
+                console.print(f"[dim]{log_result.stdout.strip()}[/]")
+            else:
+                print(f"Startup log (/tmp/sf_gui.log):")
+                print(log_result.stdout.strip())
+
+
+def _debug_print(title, content, error=False):
+    """Print a debug section with title and content, adapting to Rich/non-Rich mode."""
+    if CYBER_UI_AVAILABLE:
+        from rich.panel import Panel
+        console = get_console()
+        if error:
+            console.print(Panel(content, title=f"[bold red]{title}[/]", border_style="red"))
+        else:
+            console.print(Panel(content, title=f"[bold green]{title}[/]", border_style="green"))
+    else:
+        color = C.RED if error else C.GREEN
+        print(f"\n{color}{title}:{C.RESET}")
+        print(f"{C.DIM}{'─' * 60}{C.RESET}")
+        print(content)
+        print(f"{C.DIM}{'─' * 60}{C.RESET}")
+
+
+def _debug_print_header(text):
+    """Print a debug status header."""
+    if CYBER_UI_AVAILABLE:
+        console = get_console()
+        console.print(f"\n[yellow]{text}[/]")
+    else:
+        print(f"\n{text}")
 
 
 def _c2_debug_worker_logs(config_manager):
@@ -6380,96 +7660,107 @@ def _c2_debug_worker_logs(config_manager):
         from discovery.distributed import DistributedScanController
 
         controller = DistributedScanController(config_manager)
+        ssh = controller.ssh  # Reuse controller's SSH connection
+        scan_mode = config_manager.config.scan_mode
 
-        # Show both log file and tmux output
         if CYBER_UI_AVAILABLE:
-            console.print(f"\n[bold cyan]═══ {worker.get_display_name()} ═══[/]\n")
-
-            # Get scan log
-            console.print("[yellow]Fetching scan log...[/]")
-            log_success, log_content = controller.get_worker_logs(worker.hostname, lines=100)
-
-            if log_success:
-                from rich.panel import Panel
-                console.print(Panel(
-                    log_content,
-                    title="[bold green]Scan Log (last 100 lines)[/]",
-                    border_style="green"
-                ))
-            else:
-                console.print(f"[red]✗ {log_content}[/]")
-
-            # Get tmux output
-            console.print("\n[yellow]Fetching tmux session output...[/]")
-            tmux_success, tmux_content = controller.get_tmux_output(worker.hostname, lines=50)
-
-            if tmux_success:
-                from rich.panel import Panel
-                console.print(Panel(
-                    tmux_content,
-                    title="[bold blue]Tmux Session (last 50 lines)[/]",
-                    border_style="blue"
-                ))
-            else:
-                console.print(f"[red]✗ {tmux_content}[/]")
-
-            # Get error logs
-            console.print("\n[yellow]Checking for error logs...[/]")
-            error_success, error_content = controller.get_worker_errors(worker.hostname, limit=10)
-
-            if error_success and "No error files found" not in error_content:
-                from rich.panel import Panel
-                console.print(Panel(
-                    error_content,
-                    title="[bold red]Scan Errors[/]",
-                    border_style="red"
-                ))
-            elif error_success:
-                console.print(f"[green]✓ {error_content}[/]")
-            else:
-                console.print(f"[red]✗ {error_content}[/]")
+            console.print(f"\n[bold cyan]═══ {worker.get_display_name()} ═══[/]")
+            console.print(f"[dim]Scan mode: {scan_mode}[/]\n")
         else:
             print(f"\n{'=' * 60}")
             print(f"Worker: {worker.get_display_name()}")
+            print(f"Scan mode: {scan_mode}")
             print('=' * 60)
 
-            # Get scan log
-            print("\nFetching scan log...")
-            log_success, log_content = controller.get_worker_logs(worker.hostname, lines=100)
+        if scan_mode == "webapi":
+            # WebAPI mode: query the SpiderFoot web server directly
+            port = worker.gui_port
 
-            if log_success:
-                print(f"\n{C.GREEN}Scan Log (last 100 lines):{C.RESET}")
-                print(f"{C.DIM}{'─' * 60}{C.RESET}")
-                print(log_content)
-                print(f"{C.DIM}{'─' * 60}{C.RESET}")
+            # 1. Check web server status
+            is_running, active_scans, ssh_ok = controller.check_web_server_status(worker)
+
+            if not ssh_ok:
+                _debug_print("Web Server", "SSH connection failed - worker may be unreachable", error=True)
+            elif not is_running:
+                _debug_print("Web Server", "NOT RUNNING - SpiderFoot web server is down", error=True)
             else:
-                print_error(log_content)
+                _debug_print("Web Server", f"Running on port {port} with {active_scans} active scan(s)")
+
+            # 2. Query scanlist for scan statuses
+            if ssh_ok:
+                scanlist_cmd = f"""curl -s http://127.0.0.1:{port}/scanlist 2>/dev/null | python3 -c "
+import sys,json
+try:
+    data=json.load(sys.stdin)
+    for s in data:
+        print(f'  {{s[2]:40s}} {{s[6]:15s}} started:{{s[4] or \"N/A\":20s}} ended:{{s[5] or \"running\":20s}}')
+    if not data:
+        print('  (no scans found)')
+except (json.JSONDecodeError, ValueError, KeyError, IndexError, TypeError):
+    print('  ERROR: Could not parse scanlist')
+" 2>/dev/null || echo '  Web server not responding'"""
+                result = ssh.execute(worker.hostname, worker.username, scanlist_cmd, timeout=15)
+                _debug_print("Scan List", result.stdout.strip() if result.success else "Failed to query scanlist")
+
+            # 3. Show sf-web tmux session output
+            if ssh_ok:
+                tmux_result = ssh.execute(
+                    worker.hostname, worker.username,
+                    "tmux capture-pane -t sf-web -p 2>/dev/null | tail -50",
+                    timeout=15
+                )
+                if tmux_result.success and tmux_result.stdout.strip():
+                    _debug_print("Web Server Output (tmux sf-web)", tmux_result.stdout.strip())
+                else:
+                    _debug_print("Web Server Output", "No sf-web tmux session found")
+
+            # 4. Show startup log
+            if ssh_ok:
+                log_result = ssh.execute(
+                    worker.hostname, worker.username,
+                    "tail -30 /tmp/sf_gui.log 2>/dev/null || echo 'No startup log found'",
+                    timeout=15
+                )
+                if log_result.success and log_result.stdout.strip():
+                    _debug_print("Startup Log (/tmp/sf_gui.log)", log_result.stdout.strip())
+
+            # 5. Show SpiderFoot processes
+            if ssh_ok:
+                ps_result = ssh.execute(
+                    worker.hostname, worker.username,
+                    "ps aux | grep -E 'sf\\.py|spiderfoot|python3' | grep -v grep || echo '  No SpiderFoot processes found'",
+                    timeout=10
+                )
+                if ps_result.success:
+                    _debug_print("SpiderFoot Processes", ps_result.stdout.strip())
+
+        else:
+            # CLI mode: show log files and tmux session (original behavior)
+            # Get scan log
+            _debug_print_header("Fetching scan log...")
+            log_success, log_content = controller.get_worker_logs(worker.hostname, lines=100)
+            if log_success:
+                _debug_print("Scan Log (last 100 lines)", log_content)
+            else:
+                _debug_print("Scan Log", log_content, error=True)
 
             # Get tmux output
-            print("\nFetching tmux session output...")
+            _debug_print_header("Fetching tmux session output...")
             tmux_success, tmux_content = controller.get_tmux_output(worker.hostname, lines=50)
-
             if tmux_success:
-                print(f"\n{C.CYAN}Tmux Session (last 50 lines):{C.RESET}")
-                print(f"{C.DIM}{'─' * 60}{C.RESET}")
-                print(tmux_content)
-                print(f"{C.DIM}{'─' * 60}{C.RESET}")
+                _debug_print("Tmux Session (last 50 lines)", tmux_content)
             else:
-                print_error(tmux_content)
+                _debug_print("Tmux Session", tmux_content, error=True)
 
             # Get error logs
-            print("\nChecking for error logs...")
+            _debug_print_header("Checking for error logs...")
             error_success, error_content = controller.get_worker_errors(worker.hostname, limit=10)
-
             if error_success and "No error files found" not in error_content:
-                print(f"\n{C.RED}Scan Errors:{C.RESET}")
-                print(f"{C.DIM}{'─' * 60}{C.RESET}")
-                print(error_content)
-                print(f"{C.DIM}{'─' * 60}{C.RESET}")
+                _debug_print("Scan Errors", error_content, error=True)
             elif error_success:
-                print(f"{C.GREEN}✓ {error_content}{C.RESET}")
+                _debug_print("Scan Errors", error_content)
             else:
-                print_error(error_content)
+                _debug_print("Scan Errors", error_content, error=True)
 
     except Exception as e:
         if CYBER_UI_AVAILABLE:
@@ -6508,17 +7799,89 @@ def _c2_reset_worker_databases(config_manager):
         get_input("\nPress Enter to continue...")
         return
 
-    # Confirm action
+    sorted_workers = sorted(
+        workers,
+        key=lambda w: config_manager._extract_worker_num(w.nickname)
+    )
+
+    # Show workers and choose mode
     if CYBER_UI_AVAILABLE:
-        console.print(f"\n[bold yellow]WARNING:[/] This will delete [red]~/.spiderfoot[/] on ALL {len(workers)} workers.")
-        console.print("[dim]This removes all scan history and cached data from SpiderFoot.[/]")
-        console.print("[dim]Use this to free up disk space or start fresh scans.[/]\n")
-        proceed = cyber_confirm("Continue with database reset?")
+        console.print("[bold white]Workers:[/]")
+        from rich.table import Table
+        table = Table(show_header=True, box=None, padding=(0, 2))
+        table.add_column("#", style="dim", width=4)
+        table.add_column("Nickname", style="cyan", width=12)
+        table.add_column("Hostname", style="white")
+        for i, w in enumerate(sorted_workers, 1):
+            table.add_row(str(i), w.nickname or "—", w.hostname)
+        console.print(table)
+        console.print()
+
+        console.print("[bold white]Reset:[/]")
+        console.print("  [cyan][1][/] Single worker  — reset one worker's database")
+        console.print("  [cyan][2][/] All workers    — reset ALL worker databases\n")
     else:
-        print(f"\n{C.YELLOW}WARNING:{C.RESET} This will delete {C.RED}~/.spiderfoot{C.RESET} on ALL {len(workers)} workers.")
-        print(f"{C.DIM}This removes all scan history and cached data from SpiderFoot.{C.RESET}")
-        print(f"{C.DIM}Use this to free up disk space or start fresh scans.{C.RESET}\n")
-        proceed = confirm("Continue with database reset?")
+        print(f"{C.WHITE}Workers:{C.RESET}")
+        for i, w in enumerate(sorted_workers, 1):
+            print(f"  {i}. {w.nickname or '—'}: {w.hostname}")
+        print()
+
+        print(f"{C.WHITE}Reset:{C.RESET}")
+        print(f"  {C.CYAN}[1]{C.RESET} Single worker  — reset one worker's database")
+        print(f"  {C.CYAN}[2]{C.RESET} All workers    — reset ALL worker databases\n")
+
+    mode_choice = get_input("Choice", default="1")
+    if mode_choice is None:
+        return
+    mode_choice = mode_choice.strip()
+
+    # Determine target workers
+    if mode_choice == "1":
+        worker_choice = get_input("Worker # to reset")
+        if worker_choice is None:
+            return
+        try:
+            idx = int(worker_choice.strip()) - 1
+            if idx < 0 or idx >= len(sorted_workers):
+                raise ValueError()
+            target_workers = [sorted_workers[idx]]
+        except (ValueError, IndexError):
+            if CYBER_UI_AVAILABLE:
+                cyber_error("Invalid selection.")
+            else:
+                print_error("Invalid selection.")
+            get_input("\nPress Enter to continue...")
+            return
+
+        # Confirm single
+        w = target_workers[0]
+        if CYBER_UI_AVAILABLE:
+            console.print(f"\n[bold yellow]WARNING:[/] This will delete [red]~/.spiderfoot[/] on [cyan]{w.nickname}[/] ({w.hostname}).")
+            console.print("[dim]This kills all processes and removes scan history.[/]\n")
+            proceed = cyber_confirm(f"Reset {w.nickname}?")
+        else:
+            print(f"\n{C.YELLOW}WARNING:{C.RESET} This will delete {C.RED}~/.spiderfoot{C.RESET} on {w.nickname} ({w.hostname}).")
+            print(f"{C.DIM}This kills all processes and removes scan history.{C.RESET}\n")
+            proceed = confirm(f"Reset {w.nickname}?")
+    elif mode_choice == "2":
+        target_workers = sorted_workers
+        if CYBER_UI_AVAILABLE:
+            console.print(f"\n[bold yellow]WARNING:[/] This will delete [red]~/.spiderfoot[/] on ALL {len(workers)} workers.")
+            console.print("[dim]This removes all scan history and cached data from SpiderFoot.[/]")
+            console.print("[dim]Use this to free up disk space or start fresh scans.[/]\n")
+            proceed = cyber_confirm("Continue with database reset?")
+        else:
+            print(f"\n{C.YELLOW}WARNING:{C.RESET} This will delete {C.RED}~/.spiderfoot{C.RESET} on ALL {len(workers)} workers.")
+            print(f"{C.DIM}This removes all scan history and cached data from SpiderFoot.{C.RESET}")
+            print(f"{C.DIM}Use this to free up disk space or start fresh scans.{C.RESET}\n")
+            proceed = confirm("Continue with database reset?")
+    else:
+        if CYBER_UI_AVAILABLE:
+            cyber_error("Invalid choice.")
+        else:
+            print_error("Invalid choice.")
+        get_input("\nPress Enter to continue...")
+        return
 
     if not proceed:
         if CYBER_UI_AVAILABLE:
@@ -6528,7 +7891,7 @@ def _c2_reset_worker_databases(config_manager):
         get_input("\nPress Enter to continue...")
         return
 
-    # Execute reset on all workers
+    # Execute reset
     from discovery.distributed import SSHExecutor
 
     ssh = SSHExecutor(
@@ -6538,22 +7901,21 @@ def _c2_reset_worker_databases(config_manager):
     )
 
     if CYBER_UI_AVAILABLE:
-        console.print("\n[cyan]Resetting databases on workers...[/]\n")
+        console.print(f"\n[cyan]Resetting database on {len(target_workers)} worker(s)...[/]\n")
     else:
-        print(f"\n{C.CYAN}Resetting databases on workers...{C.RESET}\n")
+        print(f"\n{C.CYAN}Resetting database on {len(target_workers)} worker(s)...{C.RESET}\n")
 
     success_count = 0
     fail_count = 0
 
     import time as _time
 
-    for worker in workers:
+    for worker in target_workers:
         hostname = worker.hostname
         username = worker.username
         nickname = worker.nickname or hostname
 
         # FIRST: Kill all scan-related processes to release database locks
-        # Use multiple approaches for reliability (pkill, killall, kill with pgrep)
         kill_cmd = f"""
 tmux kill-server 2>/dev/null || true
 pkill -9 -f run_scans.sh 2>/dev/null || true
@@ -6574,13 +7936,11 @@ true
         _time.sleep(2)
 
         # SECOND: Remove ~/.spiderfoot directory and output files
-        # Use 'rm -rf dir' instead of 'dir/*' to avoid zsh glob errors on empty dirs
         reset_cmd = "rm -rf ~/.spiderfoot ~/sf_distributed/output ~/sf_distributed/logs && mkdir -p ~/sf_distributed/output ~/sf_distributed/logs && echo 'DB_RESET_OK'"
         result = ssh.execute(hostname, username, reset_cmd, timeout=30)
 
         if result.success and 'DB_RESET_OK' in result.stdout:
             success_count += 1
-            # Reset worker status and counters
             config_manager.update_worker(
                 hostname,
                 status="idle",
@@ -6604,13 +7964,13 @@ true
     if CYBER_UI_AVAILABLE:
         console.print()
         if fail_count == 0:
-            cyber_success(f"All {success_count} workers reset successfully.")
+            cyber_success(f"All {success_count} worker(s) reset successfully.")
         else:
             cyber_warning(f"{success_count} succeeded, {fail_count} failed.")
     else:
         print()
         if fail_count == 0:
-            print_success(f"All {success_count} workers reset successfully.")
+            print_success(f"All {success_count} worker(s) reset successfully.")
         else:
             print_warning(f"{success_count} succeeded, {fail_count} failed.")
 
@@ -7926,6 +9286,7 @@ def _spiderfoot_batch_scan_menu(config, sf_path, sf_python, sf_output):
             start_time=datetime.now().isoformat()
         )
 
+        _background_scan_stop.clear()
         _background_scan_thread = threading.Thread(
             target=_run_background_scans,
             args=(scanner, tracker),
@@ -8590,6 +9951,7 @@ SpiderFoot is required to scan domains. Would you like to install it now?
             start_time=datetime.now().isoformat()
         )
 
+        _background_scan_stop.clear()
         _background_scan_thread = threading.Thread(
             target=_run_background_scans,
             args=(scanner, tracker),
@@ -10073,6 +11435,8 @@ def main():
             scrape_domains_menu()
         elif choice == '2':
             load_domains_menu()
+        elif choice == 'd':
+            _run_delete_domain_lists()
         elif choice == '3':
             spiderfoot_control_center_menu()  # Unified SpiderFoot Control Center
         elif choice == '4':
@@ -10121,6 +11485,11 @@ def main():
                 print_warning("Background scan is still running!")
                 if not confirm("Quit anyway? (scans will be interrupted)"):
                     continue
+                # Signal background thread to stop gracefully
+                _background_scan_stop.set()
+                if _background_scan_thread and _background_scan_thread.is_alive():
+                    print_info("Waiting for background scan to stop...")
+                    _background_scan_thread.join(timeout=5)
 
             clear_screen()
             print(f"""
@@ -10140,4 +11509,13 @@ def main():
             time.sleep(1)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nInterrupted.")
+        sys.exit(0)
+    except Exception as e:
+        print(f"\n[FATAL] Unhandled error: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)

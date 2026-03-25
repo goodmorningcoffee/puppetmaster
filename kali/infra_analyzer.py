@@ -192,20 +192,42 @@ class InfraAnalysisResult:
         return score
 
     def get_domain_clusters(self, min_score: float = 0.5) -> List[Set[str]]:
-        """Group domains into clusters by correlation"""
-        clusters = []
-        domains = set(self.domains_analyzed)
+        """Group domains into clusters by correlation using connected components.
 
-        while domains:
-            domain = domains.pop()
-            cluster = {domain}
+        Uses BFS to find connected components so that transitive connections
+        are captured (if A correlates with B and B with C, all three cluster
+        together).
+        """
+        from collections import deque
 
-            # Find all domains correlated to this one
-            for other in list(domains):
-                if self.get_correlation_score(domain, other) >= min_score:
-                    cluster.add(other)
-                    domains.discard(other)
+        all_domains = list(self.domains_analyzed)
 
+        # Build adjacency graph from domain pairs exceeding min_score
+        graph: Dict[str, Set[str]] = {d: set() for d in all_domains}
+        for i, d1 in enumerate(all_domains):
+            for d2 in all_domains[i + 1:]:
+                if self.get_correlation_score(d1, d2) >= min_score:
+                    graph[d1].add(d2)
+                    graph[d2].add(d1)
+
+        # BFS to find connected components
+        visited: Set[str] = set()
+        clusters: List[Set[str]] = []
+
+        for domain in all_domains:
+            if domain in visited:
+                continue
+            cluster: Set[str] = set()
+            queue = deque([domain])
+            while queue:
+                node = queue.popleft()
+                if node in visited:
+                    continue
+                visited.add(node)
+                cluster.add(node)
+                for neighbor in graph[node]:
+                    if neighbor not in visited:
+                        queue.append(neighbor)
             clusters.append(cluster)
 
         return [c for c in clusters if len(c) > 1]
@@ -404,9 +426,10 @@ class InfrastructureAnalyzer:
             for ip in infra.ips:
                 try:
                     parts = ip.split('.')
-                    if len(parts) == 4:
-                        range_24 = '.'.join(parts[:3]) + '.0/24'
-                        ip_ranges[range_24].add(domain)
+                    if len(parts) != 4 or not all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
+                        continue  # Skip invalid IPs
+                    range_24 = '.'.join(parts[:3]) + '.0/24'
+                    ip_ranges[range_24].add(domain)
                 except Exception:
                     pass
 
