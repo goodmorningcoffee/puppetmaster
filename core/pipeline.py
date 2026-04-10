@@ -25,7 +25,9 @@ try:
     import sys
     from pathlib import Path
     # Add parent directory to path for wildcardDNS_analyzer
-    sys.path.insert(0, str(Path(__file__).parent.parent))
+    _parent = str(Path(__file__).parent.parent)
+    if _parent not in sys.path:
+        sys.path.insert(0, _parent)
     from wildcardDNS_analyzer import quick_wildcard_check, extract_base_domains_from_clusters
     HAS_WILDCARD_ANALYZER = True
 except ImportError:

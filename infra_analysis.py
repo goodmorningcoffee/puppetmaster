@@ -14,52 +14,16 @@ import os
 import time
 
 # Add parent directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_parent_dir = os.path.dirname(os.path.abspath(__file__))
+if _parent_dir not in sys.path:
+    sys.path.insert(0, _parent_dir)
 
 
 # =============================================================================
 # CYBERPUNK COLOR SCHEME
 # =============================================================================
 
-class C:
-    """Dark cyberpunk color palette"""
-    # Core colors
-    BLACK = '\033[30m'
-    RED = '\033[91m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    BLUE = '\033[94m'
-    MAGENTA = '\033[95m'
-    CYAN = '\033[96m'
-    WHITE = '\033[97m'
-
-    # Neon accents
-    NEON_PINK = '\033[38;5;198m'
-    NEON_CYAN = '\033[38;5;51m'
-    NEON_GREEN = '\033[38;5;46m'
-    NEON_ORANGE = '\033[38;5;208m'
-    NEON_PURPLE = '\033[38;5;129m'
-    NEON_RED = '\033[38;5;196m'
-
-    # Dark tones
-    DARK_GRAY = '\033[38;5;238m'
-    MED_GRAY = '\033[38;5;244m'
-    LIGHT_GRAY = '\033[38;5;250m'
-
-    # Styles
-    BOLD = '\033[1m'
-    DIM = '\033[2m'
-    ITALIC = '\033[3m'
-    UNDERLINE = '\033[4m'
-    BLINK = '\033[5m'
-    REVERSE = '\033[7m'
-    RESET = '\033[0m'
-
-    # Background
-    BG_BLACK = '\033[40m'
-    BG_RED = '\033[41m'
-    BG_GREEN = '\033[42m'
-    BG_DARK = '\033[48;5;234m'
+from utils.colors import C
 
 
 # =============================================================================
@@ -75,7 +39,7 @@ BANNER_MAIN = f"""
     ██║██║ ╚████║██║     ██║  ██║██║  ██║
     ╚═╝╚═╝  ╚═══╝╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝{C.RESET}
 {C.NEON_PINK}    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀{C.RESET}
-{C.DIM}{C.WHITE}    INFRASTRUCTURE CORRELATION ANALYZER{C.RESET}
+{C.DIM}{C.BRIGHT_WHITE}    INFRASTRUCTURE CORRELATION ANALYZER{C.RESET}
 {C.DARK_GRAY}    [ Supplementary Sock Puppet Detection ]{C.RESET}
 """
 
@@ -138,13 +102,13 @@ def hline(char: str = '─', width: int = 60, color: str = C.DARK_GRAY) -> str:
 def menu_option(key: str, label: str, desc: str = "") -> str:
     """Format a menu option"""
     if desc:
-        return f"  {C.NEON_CYAN}[{key}]{C.RESET} {C.WHITE}{label}{C.RESET} {C.DARK_GRAY}// {desc}{C.RESET}"
-    return f"  {C.NEON_CYAN}[{key}]{C.RESET} {C.WHITE}{label}{C.RESET}"
+        return f"  {C.NEON_CYAN}[{key}]{C.RESET} {C.BRIGHT_WHITE}{label}{C.RESET} {C.DARK_GRAY}// {desc}{C.RESET}"
+    return f"  {C.NEON_CYAN}[{key}]{C.RESET} {C.BRIGHT_WHITE}{label}{C.RESET}"
 
 
 def prompt(text: str) -> str:
     """Styled input prompt"""
-    return f"{C.NEON_PINK}>{C.RESET} {C.WHITE}{text}{C.RESET} "
+    return f"{C.NEON_PINK}>{C.RESET} {C.BRIGHT_WHITE}{text}{C.RESET} "
 
 
 def status(stype: str, msg: str) -> str:
@@ -157,7 +121,7 @@ def status(stype: str, msg: str) -> str:
         'scan': f"{C.NEON_PURPLE}[~]{C.RESET}",
         'data': f"{C.NEON_CYAN}[◆]{C.RESET}",
     }
-    icon = icons.get(stype, f"{C.WHITE}[*]{C.RESET}")
+    icon = icons.get(stype, f"{C.BRIGHT_WHITE}[*]{C.RESET}")
     return f"  {icon} {msg}"
 
 
@@ -191,13 +155,13 @@ def interactive_mode():
     # Welcome message
     print(f"\n{C.DIM}  Initializing infrastructure analysis protocols...{C.RESET}")
     time.sleep(0.3)
-    print(status('ok', f"{C.GREEN}System ready{C.RESET}"))
+    print(status('ok', f"{C.BRIGHT_GREEN}System ready{C.RESET}"))
     print()
 
     while True:
         # Main menu
         print(hline('═', 55, C.NEON_CYAN))
-        print(f"  {C.BOLD}{C.WHITE}MAIN MENU{C.RESET}")
+        print(f"  {C.BOLD}{C.BRIGHT_WHITE}MAIN MENU{C.RESET}")
         print(hline('─', 55, C.DARK_GRAY))
         print()
         print(menu_option('1', 'Analyze Domains', 'Run infrastructure correlation'))
@@ -242,7 +206,7 @@ def run_analysis_menu():
     print(BANNER_MINI)
 
     content = [
-        f"{C.WHITE}Select domain input method:{C.RESET}",
+        f"{C.BRIGHT_WHITE}Select domain input method:{C.RESET}",
         "",
         f"{C.NEON_CYAN}[1]{C.RESET} Load from file",
         f"{C.NEON_CYAN}[2]{C.RESET} Enter manually",
@@ -361,9 +325,9 @@ def run_analysis_menu():
     print(hline('═', 55, C.NEON_ORANGE))
     print(f"  {C.BOLD}{C.NEON_ORANGE}CONFIRM SCAN{C.RESET}")
     print(hline('─', 55, C.DARK_GRAY))
-    print(f"  Targets:  {C.WHITE}{len(domains)} domains{C.RESET}")
-    print(f"  Mode:     {C.WHITE}{mode.value}{C.RESET}")
-    print(f"  Output:   {C.WHITE}{output_dir}{C.RESET}")
+    print(f"  Targets:  {C.BRIGHT_WHITE}{len(domains)} domains{C.RESET}")
+    print(f"  Mode:     {C.BRIGHT_WHITE}{mode.value}{C.RESET}")
+    print(f"  Output:   {C.BRIGHT_WHITE}{output_dir}{C.RESET}")
     print(f"  Est Time: {C.DARK_GRAY}~{len(domains) * 30}-{len(domains) * 60}s{C.RESET}")
     print(hline('═', 55, C.NEON_ORANGE))
     print()
@@ -388,7 +352,7 @@ def run_analysis_menu():
             'correlating': C.NEON_PINK,
             'error': C.NEON_RED,
         }
-        c = colors.get(pstatus, C.WHITE)
+        c = colors.get(pstatus, C.BRIGHT_WHITE)
         icon = '◆' if pstatus == 'complete' else '○' if pstatus == 'scanning' else '●'
         print(f"  {c}{icon}{C.RESET} {C.DIM}[{pstatus:11}]{C.RESET} {domain}: {message}")
 
@@ -519,9 +483,9 @@ def show_about():
     print(BANNER_MAIN)
 
     content = [
-        f"{C.WHITE}INFRA finds hidden infrastructure connections{C.RESET}",
-        f"{C.WHITE}between domains that may indicate common{C.RESET}",
-        f"{C.WHITE}ownership or operation.{C.RESET}",
+        f"{C.BRIGHT_WHITE}INFRA finds hidden infrastructure connections{C.RESET}",
+        f"{C.BRIGHT_WHITE}between domains that may indicate common{C.RESET}",
+        f"{C.BRIGHT_WHITE}ownership or operation.{C.RESET}",
         "",
         f"{C.NEON_CYAN}Signals Detected:{C.RESET}",
         f"  {C.DIM}•{C.RESET} Shared IP addresses / ASNs",
@@ -585,7 +549,7 @@ def cli_mode(args):
     def progress_cb(domain, pstatus, message):
         if args.quiet:
             return
-        c = C.NEON_GREEN if pstatus == 'complete' else C.NEON_CYAN if pstatus == 'scanning' else C.WHITE
+        c = C.NEON_GREEN if pstatus == 'complete' else C.NEON_CYAN if pstatus == 'scanning' else C.BRIGHT_WHITE
         print(f"  {c}○{C.RESET} [{pstatus:11}] {domain}: {message}")
 
     # Run

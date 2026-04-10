@@ -59,19 +59,22 @@ class Config:
 # COLORS
 # ============================================================================
 
-class Colors:
-    RED = '\033[91m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    BLUE = '\033[94m'
-    PURPLE = '\033[95m'
-    CYAN = '\033[96m'
-    RESET = '\033[0m'
-    BOLD = '\033[1m'
-    DIM = '\033[2m'
+try:
+    from utils.colors import Colors
+except ImportError:
+    class Colors:
+        RED = '\033[91m'
+        GREEN = '\033[92m'
+        YELLOW = '\033[93m'
+        BLUE = '\033[94m'
+        PURPLE = '\033[95m'
+        CYAN = '\033[96m'
+        BOLD = '\033[1m'
+        DIM = '\033[2m'
+        RESET = '\033[0m'
 
 def print_banner():
-    print(f"""{Colors.CYAN}{Colors.BOLD}
+    print(f"""{Colors.BRIGHT_CYAN}{Colors.BOLD}
 ╔══════════════════════════════════════════════════════════════════════╗
 ║                        EC2 UPLOADER                                 ║
 ║              Recursive Upload to Remote Server                      ║
@@ -81,11 +84,11 @@ def print_banner():
 def log(level, message):
     timestamp = datetime.now().strftime("%H:%M:%S")
     colors = {
-        "INFO": Colors.BLUE,
-        "SUCCESS": Colors.GREEN,
-        "WARN": Colors.YELLOW,
-        "ERROR": Colors.RED,
-        "UPLOAD": Colors.PURPLE,
+        "INFO": Colors.BRIGHT_BLUE,
+        "SUCCESS": Colors.BRIGHT_GREEN,
+        "WARN": Colors.BRIGHT_YELLOW,
+        "ERROR": Colors.BRIGHT_RED,
+        "UPLOAD": Colors.BRIGHT_MAGENTA,
     }
     symbols = {
         "INFO": "ℹ️ ",
@@ -432,17 +435,17 @@ def upload_files(host, user, key_path, local_dir, remote_dir):
                     if tar_proc.returncode != 0:
                         tar_stderr = tar_proc.stderr.read() if tar_proc.stderr else b""
                         error_msg = tar_stderr.decode(errors='replace').strip()[:80] if tar_stderr else "tar failed"
-                        print(f"  {Colors.RED}✗{Colors.RESET} {item}: {error_msg}")
+                        print(f"  {Colors.BRIGHT_RED}✗{Colors.RESET} {item}: {error_msg}")
                         failed_count += 1
                         failed_items.append(item)
                         continue
 
                     if ssh_proc.returncode == 0:
-                        print(f"  {Colors.GREEN}✓{Colors.RESET} {item}")
+                        print(f"  {Colors.BRIGHT_GREEN}✓{Colors.RESET} {item}")
                         uploaded_count += 1
                     else:
                         error_msg = ssh_stderr.decode(errors='replace').strip()[:80] if ssh_stderr else "Unknown error"
-                        print(f"  {Colors.RED}✗{Colors.RESET} {item}: {error_msg}")
+                        print(f"  {Colors.BRIGHT_RED}✗{Colors.RESET} {item}: {error_msg}")
                         failed_count += 1
                         failed_items.append(item)
                 except subprocess.TimeoutExpired:
@@ -451,11 +454,11 @@ def upload_files(host, user, key_path, local_dir, remote_dir):
                             p.kill()
                         except Exception:
                             pass
-                    print(f"  {Colors.RED}✗{Colors.RESET} {item}: Timeout after {timeout}s")
+                    print(f"  {Colors.BRIGHT_RED}✗{Colors.RESET} {item}: Timeout after {timeout}s")
                     failed_count += 1
                     failed_items.append(item)
                 except Exception as e:
-                    print(f"  {Colors.RED}✗{Colors.RESET} {item}: {e}")
+                    print(f"  {Colors.BRIGHT_RED}✗{Colors.RESET} {item}: {e}")
                     failed_count += 1
                     failed_items.append(item)
             else:
@@ -472,19 +475,19 @@ def upload_files(host, user, key_path, local_dir, remote_dir):
                 try:
                     result = subprocess.run(scp_cmd, capture_output=True, text=True, timeout=timeout)
                     if result.returncode == 0:
-                        print(f"  {Colors.GREEN}✓{Colors.RESET} {item}")
+                        print(f"  {Colors.BRIGHT_GREEN}✓{Colors.RESET} {item}")
                         uploaded_count += 1
                     else:
                         error_msg = result.stderr.strip()[:80] if result.stderr else "Unknown error"
-                        print(f"  {Colors.RED}✗{Colors.RESET} {item}: {error_msg}")
+                        print(f"  {Colors.BRIGHT_RED}✗{Colors.RESET} {item}: {error_msg}")
                         failed_count += 1
                         failed_items.append(item)
                 except subprocess.TimeoutExpired:
-                    print(f"  {Colors.RED}✗{Colors.RESET} {item}: Timeout after {timeout}s")
+                    print(f"  {Colors.BRIGHT_RED}✗{Colors.RESET} {item}: Timeout after {timeout}s")
                     failed_count += 1
                     failed_items.append(item)
                 except Exception as e:
-                    print(f"  {Colors.RED}✗{Colors.RESET} {item}: {e}")
+                    print(f"  {Colors.BRIGHT_RED}✗{Colors.RESET} {item}: {e}")
                     failed_count += 1
                     failed_items.append(item)
 
@@ -541,7 +544,7 @@ def get_ec2_address():
     last_host = config.get('last_host', '')
 
     if last_host:
-        print(f"\n{Colors.CYAN}Last used EC2:{Colors.RESET} {last_host}")
+        print(f"\n{Colors.BRIGHT_CYAN}Last used EC2:{Colors.RESET} {last_host}")
         print(f"{Colors.DIM}Press Enter to use, 'n' for new, or paste new address directly{Colors.RESET}")
         response = sanitize_input(input(f"Use this? [Y/n/new-address]: "))
 
@@ -558,7 +561,7 @@ def get_ec2_address():
             save_config(config)
             return response
 
-    print(f"\n{Colors.CYAN}Enter EC2 address:{Colors.RESET}")
+    print(f"\n{Colors.BRIGHT_CYAN}Enter EC2 address:{Colors.RESET}")
     print(f"  Examples: ec2-54-211-76-29.compute-1.amazonaws.com")
     print(f"            54.211.76.29")
 
@@ -585,7 +588,7 @@ def get_local_directory():
     # Check saved config
     last_dir = config.get('local_dir', default_dir if os.path.exists(default_dir) else script_dir)
 
-    print(f"\n{Colors.CYAN}Local directory to upload:{Colors.RESET}")
+    print(f"\n{Colors.BRIGHT_CYAN}Local directory to upload:{Colors.RESET}")
     print(f"  Last used: {last_dir}")
 
     # Check if it exists and show contents
@@ -631,7 +634,7 @@ def get_remote_dir():
     if not validate_remote_path(last_dir):
         last_dir = '~/puppet'
 
-    print(f"\n{Colors.CYAN}Remote directory:{Colors.RESET} {last_dir}")
+    print(f"\n{Colors.BRIGHT_CYAN}Remote directory:{Colors.RESET} {last_dir}")
     new_dir = sanitize_input(input(f"Change? (Enter to keep, or type new path): "))
 
     if new_dir:
@@ -656,7 +659,7 @@ def get_key_path():
     config = load_config()
     last_key = config.get('key_path', '')
 
-    print(f"\n{Colors.CYAN}SSH Key:{Colors.RESET}")
+    print(f"\n{Colors.BRIGHT_CYAN}SSH Key:{Colors.RESET}")
     if last_key:
         print(f"  Last used: {last_key}")
         new_key = sanitize_input(input(f"Path [{last_key}]: "))
@@ -776,7 +779,7 @@ def main():
     # Test connection
     print()
     if not test_connection(host, Config.DEFAULT_USER, key_path):
-        print(f"\n{Colors.RED}Connection failed. Check:{Colors.RESET}")
+        print(f"\n{Colors.BRIGHT_RED}Connection failed. Check:{Colors.RESET}")
         print("  1. EC2 instance is running")
         print("  2. Security group allows SSH (port 22)")
         print("  3. Correct key file")
@@ -794,7 +797,7 @@ def main():
     success = upload_files(host, Config.DEFAULT_USER, key_path, local_dir, remote_dir)
 
     # Summary
-    print(f"\n{Colors.GREEN}{'='*60}")
+    print(f"\n{Colors.BRIGHT_GREEN}{'='*60}")
     print(f"  UPLOAD COMPLETE!")
     print(f"{'='*60}{Colors.RESET}")
 
@@ -812,5 +815,5 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print(f"\n{Colors.YELLOW}Cancelled{Colors.RESET}")
+        print(f"\n{Colors.BRIGHT_YELLOW}Cancelled{Colors.RESET}")
         sys.exit(0)

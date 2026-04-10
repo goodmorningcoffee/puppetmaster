@@ -69,57 +69,49 @@ except ImportError:
 # TERMINAL UI - CYBERPUNK AESTHETIC
 # =============================================================================
 
-class C:
-    """ANSI color codes for cyberpunk terminal aesthetic"""
-    RESET = '\033[0m'
-    BOLD = '\033[1m'
-    DIM = '\033[2m'
-
-    # Primary colors
-    RED = '\033[91m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    BLUE = '\033[94m'
-    MAGENTA = '\033[95m'
-    CYAN = '\033[96m'
-    WHITE = '\033[97m'
-
-    # Bright variants
-    BRIGHT_RED = '\033[91m'
-    BRIGHT_GREEN = '\033[92m'
-    BRIGHT_YELLOW = '\033[93m'
-    BRIGHT_BLUE = '\033[94m'
-    BRIGHT_MAGENTA = '\033[95m'
-    BRIGHT_CYAN = '\033[96m'
-    BRIGHT_WHITE = '\033[97m'
+try:
+    from utils.colors import C
+except ImportError:
+    class C:
+        RESET = '\033[0m'
+        BOLD = '\033[1m'
+        DIM = '\033[2m'
+        BRIGHT_RED = '\033[91m'
+        BRIGHT_GREEN = '\033[92m'
+        BRIGHT_YELLOW = '\033[93m'
+        BRIGHT_BLUE = '\033[94m'
+        BRIGHT_MAGENTA = '\033[95m'
+        BRIGHT_CYAN = '\033[96m'
+        BRIGHT_WHITE = '\033[97m'
+        WHITE = '\033[37m'
 
 
 BANNER = f"""
-{C.CYAN}+{'=' * 78}+
+{C.BRIGHT_CYAN}+{'=' * 78}+
 |{' ' * 78}|
-|  {C.MAGENTA}███████╗██╗ ██████╗ ███╗   ██╗ █████╗ ██╗     {C.CYAN}                              |
-|  {C.MAGENTA}██╔════╝██║██╔════╝ ████╗  ██║██╔══██╗██║     {C.CYAN}                              |
-|  {C.MAGENTA}███████╗██║██║  ███╗██╔██╗ ██║███████║██║     {C.CYAN}                              |
-|  {C.MAGENTA}╚════██║██║██║   ██║██║╚██╗██║██╔══██║██║     {C.CYAN}                              |
-|  {C.MAGENTA}███████║██║╚██████╔╝██║ ╚████║██║  ██║███████╗{C.CYAN}                              |
-|  {C.MAGENTA}╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝{C.CYAN}                              |
-|        {C.YELLOW}██╗██╗███╗   ██╗ ██████╗ ██╗███████╗███████╗{C.CYAN}                          |
-|       {C.YELLOW}██╔╝██╔╝████╗  ██║██╔═══██╗██║██╔════╝██╔════╝{C.CYAN}                          |
-|      {C.YELLOW}██╔╝██╔╝ ██╔██╗ ██║██║   ██║██║███████╗█████╗  {C.CYAN}                          |
-|     {C.YELLOW}██╔╝██╔╝  ██║╚██╗██║██║   ██║██║╚════██║██╔══╝  {C.CYAN}                          |
-|    {C.YELLOW}██╔╝██╔╝   ██║ ╚████║╚██████╔╝██║███████║███████╗{C.CYAN}                          |
-|    {C.YELLOW}╚═╝ ╚═╝    ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚══════╝╚══════╝{C.CYAN}                          |
+|  {C.BRIGHT_MAGENTA}███████╗██╗ ██████╗ ███╗   ██╗ █████╗ ██╗     {C.BRIGHT_CYAN}                              |
+|  {C.BRIGHT_MAGENTA}██╔════╝██║██╔════╝ ████╗  ██║██╔══██╗██║     {C.BRIGHT_CYAN}                              |
+|  {C.BRIGHT_MAGENTA}███████╗██║██║  ███╗██╔██╗ ██║███████║██║     {C.BRIGHT_CYAN}                              |
+|  {C.BRIGHT_MAGENTA}╚════██║██║██║   ██║██║╚██╗██║██╔══██║██║     {C.BRIGHT_CYAN}                              |
+|  {C.BRIGHT_MAGENTA}███████║██║╚██████╔╝██║ ╚████║██║  ██║███████╗{C.BRIGHT_CYAN}                              |
+|  {C.BRIGHT_MAGENTA}╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝{C.BRIGHT_CYAN}                              |
+|        {C.BRIGHT_YELLOW}██╗██╗███╗   ██╗ ██████╗ ██╗███████╗███████╗{C.BRIGHT_CYAN}                          |
+|       {C.BRIGHT_YELLOW}██╔╝██╔╝████╗  ██║██╔═══██╗██║██╔════╝██╔════╝{C.BRIGHT_CYAN}                          |
+|      {C.BRIGHT_YELLOW}██╔╝██╔╝ ██╔██╗ ██║██║   ██║██║███████╗█████╗  {C.BRIGHT_CYAN}                          |
+|     {C.BRIGHT_YELLOW}██╔╝██╔╝  ██║╚██╗██║██║   ██║██║╚════██║██╔══╝  {C.BRIGHT_CYAN}                          |
+|    {C.BRIGHT_YELLOW}██╔╝██╔╝   ██║ ╚████║╚██████╔╝██║███████║███████╗{C.BRIGHT_CYAN}                          |
+|    {C.BRIGHT_YELLOW}╚═╝ ╚═╝    ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚══════╝╚══════╝{C.BRIGHT_CYAN}                          |
 |{' ' * 78}|
-|  {C.WHITE}[ WILDCARD DNS ANALYZER v1.0 ]{C.CYAN}                                            |
-|  {C.DIM}Separating signal from noise in enumerated subdomains{C.RESET}{C.CYAN}                    |
-|  {C.DIM}"In infinite subdomains, truth hides in the anomalies"{C.RESET}{C.CYAN}                   |
+|  {C.BRIGHT_WHITE}[ WILDCARD DNS ANALYZER v1.0 ]{C.BRIGHT_CYAN}                                            |
+|  {C.DIM}Separating signal from noise in enumerated subdomains{C.RESET}{C.BRIGHT_CYAN}                    |
+|  {C.DIM}"In infinite subdomains, truth hides in the anomalies"{C.RESET}{C.BRIGHT_CYAN}                   |
 |{' ' * 78}|
 +{'=' * 78}+{C.RESET}
 """
 
 MINI_BANNER = f"""
-{C.CYAN}+{'-' * 50}+
-|  {C.MAGENTA}SIGNAL//NOISE{C.CYAN} - Wildcard DNS Analyzer        |
+{C.BRIGHT_CYAN}+{'-' * 50}+
+|  {C.BRIGHT_MAGENTA}SIGNAL//NOISE{C.BRIGHT_CYAN} - Wildcard DNS Analyzer        |
 +{'-' * 50}+{C.RESET}
 """
 
@@ -137,37 +129,37 @@ class TerminalUI:
 
     @staticmethod
     def print_phase(phase_num: int, title: str, total: int = 6):
-        print(f"\n{C.CYAN}+{'=' * 78}+")
-        print(f"|  {C.YELLOW}{C.BOLD}PHASE {phase_num}/{total}: {title.upper()}{C.RESET}{C.CYAN}{' ' * (78 - 14 - len(title))}|")
+        print(f"\n{C.BRIGHT_CYAN}+{'=' * 78}+")
+        print(f"|  {C.BRIGHT_YELLOW}{C.BOLD}PHASE {phase_num}/{total}: {title.upper()}{C.RESET}{C.BRIGHT_CYAN}{' ' * (78 - 14 - len(title))}|")
         print(f"+{'=' * 78}+{C.RESET}\n")
 
     @staticmethod
     def print_section(title: str):
-        print(f"\n{C.MAGENTA}+-- {title} {'-' * (60 - len(title))}+{C.RESET}")
+        print(f"\n{C.BRIGHT_MAGENTA}+-- {title} {'-' * (60 - len(title))}+{C.RESET}")
 
     @staticmethod
     def print_info(msg: str):
-        print(f"  {C.CYAN}[i]{C.RESET} {msg}")
+        print(f"  {C.BRIGHT_CYAN}[i]{C.RESET} {msg}")
 
     @staticmethod
     def print_success(msg: str):
-        print(f"  {C.GREEN}[+]{C.RESET} {msg}")
+        print(f"  {C.BRIGHT_GREEN}[+]{C.RESET} {msg}")
 
     @staticmethod
     def print_warning(msg: str):
-        print(f"  {C.YELLOW}[!]{C.RESET} {msg}")
+        print(f"  {C.BRIGHT_YELLOW}[!]{C.RESET} {msg}")
 
     @staticmethod
     def print_error(msg: str):
-        print(f"  {C.RED}[-]{C.RESET} {msg}")
+        print(f"  {C.BRIGHT_RED}[-]{C.RESET} {msg}")
 
     @staticmethod
     def print_critical(msg: str):
-        print(f"  {C.RED}{C.BOLD}[CRITICAL]{C.RESET} {C.RED}{msg}{C.RESET}")
+        print(f"  {C.BRIGHT_RED}{C.BOLD}[CRITICAL]{C.RESET} {C.BRIGHT_RED}{msg}{C.RESET}")
 
     @staticmethod
     def print_anomaly(msg: str):
-        print(f"  {C.RED}{C.BOLD}[ANOMALY]{C.RESET} {C.YELLOW}{msg}{C.RESET}")
+        print(f"  {C.BRIGHT_RED}{C.BOLD}[ANOMALY]{C.RESET} {C.BRIGHT_YELLOW}{msg}{C.RESET}")
 
     @staticmethod
     def progress_bar(current: int, total: int, prefix: str = "", width: int = 40):
@@ -175,7 +167,7 @@ class TerminalUI:
         pct = current / total if total > 0 else 0
         filled = int(width * pct)
         bar = '+' * filled + '-' * (width - filled)
-        sys.stdout.write(f"\r  {C.CYAN}{prefix}: [{bar}] {pct*100:.1f}% ({current}/{total}){C.RESET}")
+        sys.stdout.write(f"\r  {C.BRIGHT_CYAN}{prefix}: [{bar}] {pct*100:.1f}% ({current}/{total}){C.RESET}")
         sys.stdout.flush()
         if current >= total:
             print()
@@ -187,20 +179,20 @@ class TerminalUI:
             col_widths = [max(len(str(row[i])) for row in [headers] + rows) + 2 for i in range(len(headers))]
 
         # Header
-        header_line = f"  {C.CYAN}|"
+        header_line = f"  {C.BRIGHT_CYAN}|"
         for i, h in enumerate(headers):
-            header_line += f" {C.BOLD}{h.ljust(col_widths[i])}{C.RESET}{C.CYAN}|"
-        print(f"  {C.CYAN}+{'+'.join(['-' * (w + 2) for w in col_widths])}+{C.RESET}")
+            header_line += f" {C.BOLD}{h.ljust(col_widths[i])}{C.RESET}{C.BRIGHT_CYAN}|"
+        print(f"  {C.BRIGHT_CYAN}+{'+'.join(['-' * (w + 2) for w in col_widths])}+{C.RESET}")
         print(header_line)
-        print(f"  {C.CYAN}+{'+'.join(['=' * (w + 2) for w in col_widths])}+{C.RESET}")
+        print(f"  {C.BRIGHT_CYAN}+{'+'.join(['=' * (w + 2) for w in col_widths])}+{C.RESET}")
 
         # Rows
         for row in rows:
-            row_line = f"  {C.CYAN}|"
+            row_line = f"  {C.BRIGHT_CYAN}|"
             for i, cell in enumerate(row):
-                row_line += f" {str(cell).ljust(col_widths[i])}{C.CYAN}|"
+                row_line += f" {str(cell).ljust(col_widths[i])}{C.BRIGHT_CYAN}|"
             print(row_line)
-        print(f"  {C.CYAN}+{'+'.join(['-' * (w + 2) for w in col_widths])}+{C.RESET}")
+        print(f"  {C.BRIGHT_CYAN}+{'+'.join(['-' * (w + 2) for w in col_widths])}+{C.RESET}")
 
 
 # Initialize UI
@@ -214,9 +206,9 @@ ui = TerminalUI()
 def get_input(prompt: str, default: str = "") -> str:
     """Get input with optional default value"""
     if default:
-        display = f"{C.WHITE}{prompt} [{C.DIM}{default}{C.RESET}{C.WHITE}]: {C.RESET}"
+        display = f"{C.BRIGHT_WHITE}{prompt} [{C.DIM}{default}{C.RESET}{C.BRIGHT_WHITE}]: {C.RESET}"
     else:
-        display = f"{C.WHITE}{prompt}: {C.RESET}"
+        display = f"{C.BRIGHT_WHITE}{prompt}: {C.RESET}"
 
     try:
         result = input(display).strip()
@@ -230,7 +222,7 @@ def confirm(prompt: str, default: bool = True) -> bool:
     """Ask for Y/N confirmation"""
     suffix = "[Y/n]" if default else "[y/N]"
     try:
-        response = input(f"{C.WHITE}{prompt} {suffix}: {C.RESET}").strip().lower()
+        response = input(f"{C.BRIGHT_WHITE}{prompt} {suffix}: {C.RESET}").strip().lower()
         if not response:
             return default
         return response in ('y', 'yes')
@@ -392,29 +384,29 @@ def interactive_menu():
     ui.print_banner()
 
     while True:
-        print(f"\n{C.CYAN}+{'-' * 60}+{C.RESET}")
-        print(f"{C.CYAN}|  {C.WHITE}MAIN MENU{C.CYAN}{' ' * 50}|{C.RESET}")
-        print(f"{C.CYAN}+{'-' * 60}+{C.RESET}\n")
+        print(f"\n{C.BRIGHT_CYAN}+{'-' * 60}+{C.RESET}")
+        print(f"{C.BRIGHT_CYAN}|  {C.BRIGHT_WHITE}MAIN MENU{C.BRIGHT_CYAN}{' ' * 50}|{C.RESET}")
+        print(f"{C.BRIGHT_CYAN}+{'-' * 60}+{C.RESET}\n")
 
-        print(f"  {C.MAGENTA}[1]{C.RESET} {C.WHITE}Quick Wildcard Check{C.RESET}")
+        print(f"  {C.BRIGHT_MAGENTA}[1]{C.RESET} {C.BRIGHT_WHITE}Quick Wildcard Check{C.RESET}")
         print(f"      {C.DIM}Test a single domain for wildcard DNS{C.RESET}")
         print()
-        print(f"  {C.MAGENTA}[2]{C.RESET} {C.WHITE}Full Analysis{C.RESET}")
+        print(f"  {C.BRIGHT_MAGENTA}[2]{C.RESET} {C.BRIGHT_WHITE}Full Analysis{C.RESET}")
         print(f"      {C.DIM}Deep dive with multi-zone DNS, CT logs, HTTP fingerprinting{C.RESET}")
         print()
-        print(f"  {C.MAGENTA}[3]{C.RESET} {C.WHITE}Load from Puppet Analysis{C.RESET}")
+        print(f"  {C.BRIGHT_MAGENTA}[3]{C.RESET} {C.BRIGHT_WHITE}Load from Puppet Analysis{C.RESET}")
         print(f"      {C.DIM}Auto-detect suspects from PUPPETMASTER results{C.RESET}")
         print()
-        print(f"  {C.MAGENTA}[4]{C.RESET} {C.WHITE}Batch Check from File{C.RESET}")
+        print(f"  {C.BRIGHT_MAGENTA}[4]{C.RESET} {C.BRIGHT_WHITE}Batch Check from File{C.RESET}")
         print(f"      {C.DIM}Check multiple domains from a text file{C.RESET}")
         print()
-        print(f"  {C.RED}[Q]{C.RESET} {C.WHITE}Quit{C.RESET}")
+        print(f"  {C.BRIGHT_RED}[Q]{C.RESET} {C.BRIGHT_WHITE}Quit{C.RESET}")
         print()
 
         choice = get_input("Select option", "1").lower()
 
         if choice == 'q' or choice == 'quit' or choice == 'exit':
-            print(f"\n{C.CYAN}[i]{C.RESET} {C.DIM}Exiting SIGNAL//NOISE analyzer...{C.RESET}\n")
+            print(f"\n{C.BRIGHT_CYAN}[i]{C.RESET} {C.DIM}Exiting SIGNAL//NOISE analyzer...{C.RESET}\n")
             break
 
         elif choice == '1':
@@ -435,9 +427,9 @@ def interactive_menu():
 
 def interactive_quick_check():
     """Interactive quick wildcard check"""
-    print(f"\n{C.CYAN}+{'-' * 60}+{C.RESET}")
-    print(f"{C.CYAN}|  {C.WHITE}QUICK WILDCARD CHECK{C.CYAN}{' ' * 39}|{C.RESET}")
-    print(f"{C.CYAN}+{'-' * 60}+{C.RESET}\n")
+    print(f"\n{C.BRIGHT_CYAN}+{'-' * 60}+{C.RESET}")
+    print(f"{C.BRIGHT_CYAN}|  {C.BRIGHT_WHITE}QUICK WILDCARD CHECK{C.BRIGHT_CYAN}{' ' * 39}|{C.RESET}")
+    print(f"{C.BRIGHT_CYAN}+{'-' * 60}+{C.RESET}\n")
 
     domain = get_input("Enter domain to check (e.g., example.io)")
     if not domain:
@@ -452,17 +444,17 @@ def interactive_quick_check():
     if domain in results:
         result = results[domain]
         if result.get('is_wildcard'):
-            print(f"\n  {C.YELLOW}{C.BOLD}[!] WILDCARD DNS DETECTED{C.RESET}")
-            print(f"      {C.WHITE}Domain:{C.RESET}       {domain}")
-            print(f"      {C.WHITE}Wildcard IP:{C.RESET}  {result.get('wildcard_ip', 'unknown')}")
-            print(f"      {C.WHITE}Confidence:{C.RESET}   {result.get('confidence', 'unknown')}")
+            print(f"\n  {C.BRIGHT_YELLOW}{C.BOLD}[!] WILDCARD DNS DETECTED{C.RESET}")
+            print(f"      {C.BRIGHT_WHITE}Domain:{C.RESET}       {domain}")
+            print(f"      {C.BRIGHT_WHITE}Wildcard IP:{C.RESET}  {result.get('wildcard_ip', 'unknown')}")
+            print(f"      {C.BRIGHT_WHITE}Confidence:{C.RESET}   {result.get('confidence', 'unknown')}")
             print()
             ui.print_warning("This domain may be a false positive in sock puppet analysis.")
             ui.print_info("Run Full Analysis for deeper investigation.")
         else:
-            print(f"\n  {C.GREEN}[+] NO WILDCARD DNS{C.RESET}")
-            print(f"      {C.WHITE}Domain:{C.RESET}     {domain}")
-            print(f"      {C.WHITE}Confidence:{C.RESET} {result.get('confidence', 'HIGH')}")
+            print(f"\n  {C.BRIGHT_GREEN}[+] NO WILDCARD DNS{C.RESET}")
+            print(f"      {C.BRIGHT_WHITE}Domain:{C.RESET}     {domain}")
+            print(f"      {C.BRIGHT_WHITE}Confidence:{C.RESET} {result.get('confidence', 'HIGH')}")
             print()
             ui.print_success("This domain does NOT appear to use wildcard DNS.")
 
@@ -471,9 +463,9 @@ def interactive_quick_check():
 
 def interactive_full_analysis():
     """Interactive full analysis"""
-    print(f"\n{C.CYAN}+{'-' * 60}+{C.RESET}")
-    print(f"{C.CYAN}|  {C.WHITE}FULL WILDCARD ANALYSIS{C.CYAN}{' ' * 37}|{C.RESET}")
-    print(f"{C.CYAN}+{'-' * 60}+{C.RESET}\n")
+    print(f"\n{C.BRIGHT_CYAN}+{'-' * 60}+{C.RESET}")
+    print(f"{C.BRIGHT_CYAN}|  {C.BRIGHT_WHITE}FULL WILDCARD ANALYSIS{C.BRIGHT_CYAN}{' ' * 37}|{C.RESET}")
+    print(f"{C.BRIGHT_CYAN}+{'-' * 60}+{C.RESET}\n")
 
     domain = get_input("Enter domain to analyze (e.g., example.io)")
     if not domain:
@@ -508,9 +500,9 @@ def interactive_full_analysis():
     print()
     results = analyzer.run_full_analysis()
 
-    print(f"\n{C.CYAN}+{'-' * 60}+{C.RESET}")
-    print(f"{C.CYAN}|  {C.GREEN}Analysis Complete{C.CYAN}{' ' * 42}|{C.RESET}")
-    print(f"{C.CYAN}+{'-' * 60}+{C.RESET}")
+    print(f"\n{C.BRIGHT_CYAN}+{'-' * 60}+{C.RESET}")
+    print(f"{C.BRIGHT_CYAN}|  {C.BRIGHT_GREEN}Analysis Complete{C.BRIGHT_CYAN}{' ' * 42}|{C.RESET}")
+    print(f"{C.BRIGHT_CYAN}+{'-' * 60}+{C.RESET}")
 
     if output_dir:
         ui.print_info(f"Reports saved to: {output_dir}")
@@ -520,9 +512,9 @@ def interactive_full_analysis():
 
 def interactive_load_from_puppet():
     """Load suspects from PUPPETMASTER analysis results"""
-    print(f"\n{C.CYAN}+{'-' * 60}+{C.RESET}")
-    print(f"{C.CYAN}|  {C.WHITE}LOAD FROM PUPPET ANALYSIS{C.CYAN}{' ' * 34}|{C.RESET}")
-    print(f"{C.CYAN}+{'-' * 60}+{C.RESET}\n")
+    print(f"\n{C.BRIGHT_CYAN}+{'-' * 60}+{C.RESET}")
+    print(f"{C.BRIGHT_CYAN}|  {C.BRIGHT_WHITE}LOAD FROM PUPPET ANALYSIS{C.BRIGHT_CYAN}{' ' * 34}|{C.RESET}")
+    print(f"{C.BRIGHT_CYAN}+{'-' * 60}+{C.RESET}\n")
 
     # Find results directories
     results_dirs = find_results_directories()
@@ -554,7 +546,7 @@ def interactive_load_from_puppet():
         # Get timestamp from directory name
         timestamp = d.name.replace('results_', '')
         mtime = datetime.fromtimestamp(d.stat().st_mtime).strftime('%Y-%m-%d %H:%M')
-        print(f"  {C.MAGENTA}[{i}]{C.RESET} {d.name} {C.DIM}({mtime}){C.RESET}")
+        print(f"  {C.BRIGHT_MAGENTA}[{i}]{C.RESET} {d.name} {C.DIM}({mtime}){C.RESET}")
 
     if len(results_dirs) > 10:
         print(f"  {C.DIM}... and {len(results_dirs) - 10} more{C.RESET}")
@@ -600,7 +592,7 @@ def interactive_load_from_puppet():
         return
 
     # Display suspects
-    print(f"{C.YELLOW}Found {len(suspects)} wildcard DNS suspect(s):{C.RESET}\n")
+    print(f"{C.BRIGHT_YELLOW}Found {len(suspects)} wildcard DNS suspect(s):{C.RESET}\n")
 
     headers = ["#", "Domain", "Wildcard IP", "Confidence"]
     rows = []
@@ -616,7 +608,7 @@ def interactive_load_from_puppet():
         ui.print_info(f"SpiderFoot exports: {sf_dir}")
 
     # Let user choose which domain to analyze
-    print(f"\n{C.WHITE}Which domain would you like to analyze?{C.RESET}")
+    print(f"\n{C.BRIGHT_WHITE}Which domain would you like to analyze?{C.RESET}")
     print(f"  {C.DIM}Enter number, domain name, or 'all' for batch analysis{C.RESET}\n")
 
     selection = get_input("Selection", "1")
@@ -658,9 +650,9 @@ def interactive_load_from_puppet():
     wildcard_dir.mkdir(exist_ok=True)
 
     for domain in domains_to_analyze:
-        print(f"\n{C.CYAN}{'=' * 70}{C.RESET}")
+        print(f"\n{C.BRIGHT_CYAN}{'=' * 70}{C.RESET}")
         ui.print_info(f"Analyzing: {domain}")
-        print(f"{C.CYAN}{'=' * 70}{C.RESET}\n")
+        print(f"{C.BRIGHT_CYAN}{'=' * 70}{C.RESET}\n")
 
         output_dir = str(wildcard_dir / f"wildcard_analysis_{domain.replace('.', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
 
@@ -674,18 +666,18 @@ def interactive_load_from_puppet():
 
         ui.print_success(f"Analysis complete. Reports saved to: {output_dir}")
 
-    print(f"\n{C.CYAN}+{'-' * 60}+{C.RESET}")
-    print(f"{C.CYAN}|  {C.GREEN}All Analyses Complete{C.CYAN}{' ' * 38}|{C.RESET}")
-    print(f"{C.CYAN}+{'-' * 60}+{C.RESET}")
+    print(f"\n{C.BRIGHT_CYAN}+{'-' * 60}+{C.RESET}")
+    print(f"{C.BRIGHT_CYAN}|  {C.BRIGHT_GREEN}All Analyses Complete{C.BRIGHT_CYAN}{' ' * 38}|{C.RESET}")
+    print(f"{C.BRIGHT_CYAN}+{'-' * 60}+{C.RESET}")
 
     get_input("\nPress Enter to continue...")
 
 
 def interactive_batch_check():
     """Batch check multiple domains from a file"""
-    print(f"\n{C.CYAN}+{'-' * 60}+{C.RESET}")
-    print(f"{C.CYAN}|  {C.WHITE}BATCH WILDCARD CHECK{C.CYAN}{' ' * 39}|{C.RESET}")
-    print(f"{C.CYAN}+{'-' * 60}+{C.RESET}\n")
+    print(f"\n{C.BRIGHT_CYAN}+{'-' * 60}+{C.RESET}")
+    print(f"{C.BRIGHT_CYAN}|  {C.BRIGHT_WHITE}BATCH WILDCARD CHECK{C.BRIGHT_CYAN}{' ' * 39}|{C.RESET}")
+    print(f"{C.BRIGHT_CYAN}+{'-' * 60}+{C.RESET}\n")
 
     file_path = get_input("Enter path to file with domains (one per line)")
     if not file_path:
@@ -728,17 +720,17 @@ def interactive_batch_check():
             non_wildcards.append((domain, result))
 
     # Display results
-    print(f"\n{C.CYAN}+{'-' * 60}+{C.RESET}")
-    print(f"{C.CYAN}|  {C.WHITE}BATCH RESULTS{C.CYAN}{' ' * 46}|{C.RESET}")
-    print(f"{C.CYAN}+{'-' * 60}+{C.RESET}\n")
+    print(f"\n{C.BRIGHT_CYAN}+{'-' * 60}+{C.RESET}")
+    print(f"{C.BRIGHT_CYAN}|  {C.BRIGHT_WHITE}BATCH RESULTS{C.BRIGHT_CYAN}{' ' * 46}|{C.RESET}")
+    print(f"{C.BRIGHT_CYAN}+{'-' * 60}+{C.RESET}\n")
 
-    print(f"  {C.WHITE}Total Checked:{C.RESET}    {len(domains)}")
-    print(f"  {C.YELLOW}Wildcards Found:{C.RESET}  {len(wildcards)}")
-    print(f"  {C.GREEN}Non-Wildcards:{C.RESET}    {len(non_wildcards)}")
+    print(f"  {C.BRIGHT_WHITE}Total Checked:{C.RESET}    {len(domains)}")
+    print(f"  {C.BRIGHT_YELLOW}Wildcards Found:{C.RESET}  {len(wildcards)}")
+    print(f"  {C.BRIGHT_GREEN}Non-Wildcards:{C.RESET}    {len(non_wildcards)}")
     print()
 
     if wildcards:
-        print(f"\n{C.YELLOW}{C.BOLD}WILDCARD DNS DETECTED:{C.RESET}\n")
+        print(f"\n{C.BRIGHT_YELLOW}{C.BOLD}WILDCARD DNS DETECTED:{C.RESET}\n")
         headers = ["Domain", "Wildcard IP", "Confidence"]
         rows = [[d, r.get('wildcard_ip', 'unknown'), r.get('confidence', 'unknown')] for d, r in wildcards]
         ui.print_table(headers, rows)
@@ -1754,21 +1746,21 @@ class WildcardAnalyzer:
 
         # Display
         if score >= 70:
-            threat_level = f"{C.RED}HIGH THREAT{C.RESET}"
+            threat_level = f"{C.BRIGHT_RED}HIGH THREAT{C.RESET}"
         elif score >= 40:
-            threat_level = f"{C.YELLOW}MEDIUM THREAT{C.RESET}"
+            threat_level = f"{C.BRIGHT_YELLOW}MEDIUM THREAT{C.RESET}"
         else:
-            threat_level = f"{C.GREEN}LOW THREAT{C.RESET}"
+            threat_level = f"{C.BRIGHT_GREEN}LOW THREAT{C.RESET}"
 
         print(f"\n  {C.BOLD}SUSPICION SCORE: {threat_level} ({score}/100){C.RESET}\n")
 
         for indicator in indicators:
             if indicator.startswith('+'):
-                print(f"  {C.RED}{indicator}{C.RESET}")
+                print(f"  {C.BRIGHT_RED}{indicator}{C.RESET}")
             elif indicator.startswith('-'):
-                print(f"  {C.GREEN}{indicator}{C.RESET}")
+                print(f"  {C.BRIGHT_GREEN}{indicator}{C.RESET}")
             else:
-                print(f"  {C.YELLOW}{indicator}{C.RESET}")
+                print(f"  {C.BRIGHT_YELLOW}{indicator}{C.RESET}")
 
     def _get_recommendation(self, score: int) -> str:
         if score >= 70:
@@ -1874,7 +1866,7 @@ def main():
         try:
             interactive_menu()
         except KeyboardInterrupt:
-            print(f"\n\n{C.CYAN}[i]{C.RESET} {C.DIM}Interrupted. Exiting...{C.RESET}\n")
+            print(f"\n\n{C.BRIGHT_CYAN}[i]{C.RESET} {C.DIM}Interrupted. Exiting...{C.RESET}\n")
         return
 
     # Arguments provided - run in CLI mode
@@ -1945,9 +1937,9 @@ Examples:
 
     # Print final status
     if not args.quiet:
-        print(f"\n{C.CYAN}+{'-' * 50}+{C.RESET}")
-        print(f"{C.CYAN}|  Analysis Complete{' ' * 31}|{C.RESET}")
-        print(f"{C.CYAN}+{'-' * 50}+{C.RESET}\n")
+        print(f"\n{C.BRIGHT_CYAN}+{'-' * 50}+{C.RESET}")
+        print(f"{C.BRIGHT_CYAN}|  Analysis Complete{' ' * 31}|{C.RESET}")
+        print(f"{C.BRIGHT_CYAN}+{'-' * 50}+{C.RESET}\n")
 
 
 if __name__ == "__main__":

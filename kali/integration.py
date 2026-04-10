@@ -253,16 +253,18 @@ def print_enhanced_menu(print_func: Callable = print, colors=None):
         return
 
     if colors is None:
-        # Fallback colors
-        class C:
-            BRIGHT_RED = "\033[91m"
-            BRIGHT_GREEN = "\033[92m"
-            BRIGHT_YELLOW = "\033[93m"
-            BRIGHT_CYAN = "\033[96m"
-            WHITE = "\033[97m"
-            DIM = "\033[2m"
-            RESET = "\033[0m"
-        colors = C
+        try:
+            from utils.colors import C as colors
+        except ImportError:
+            class _C:
+                BRIGHT_RED = "\033[91m"
+                BRIGHT_GREEN = "\033[92m"
+                BRIGHT_YELLOW = "\033[93m"
+                BRIGHT_CYAN = "\033[96m"
+                WHITE = "\033[97m"
+                DIM = "\033[2m"
+                RESET = "\033[0m"
+            colors = _C
 
     mode = get_current_mode()
     config = get_mode_config(mode)
@@ -302,11 +304,14 @@ def handle_enhanced_menu_choice(choice: str, print_func: Callable = print,
         return False
 
     if colors is None:
-        class C:
-            BRIGHT_GREEN = "\033[92m"
-            BRIGHT_YELLOW = "\033[93m"
-            RESET = "\033[0m"
-        colors = C
+        try:
+            from utils.colors import C as colors
+        except ImportError:
+            class _C:
+                BRIGHT_GREEN = "\033[92m"
+                BRIGHT_YELLOW = "\033[93m"
+                RESET = "\033[0m"
+            colors = _C
 
     if choice == 'k1':
         # Enhanced discovery
@@ -555,18 +560,21 @@ def run_infra_analysis_menu(print_func: Callable = print,
         has_visuals = True
     except ImportError:
         has_visuals = False
-        class C:
-            NEON_CYAN = '\033[96m'
-            NEON_PINK = '\033[95m'
-            NEON_GREEN = '\033[92m'
-            NEON_ORANGE = '\033[93m'
-            NEON_RED = '\033[91m'
-            NEON_PURPLE = '\033[35m'
-            WHITE = '\033[97m'
-            DARK_GRAY = '\033[90m'
-            DIM = '\033[2m'
-            BOLD = '\033[1m'
-            RESET = '\033[0m'
+        try:
+            from utils.colors import C
+        except ImportError:
+            class C:
+                NEON_CYAN = '\033[96m'
+                NEON_PINK = '\033[95m'
+                NEON_GREEN = '\033[92m'
+                NEON_ORANGE = '\033[93m'
+                NEON_RED = '\033[91m'
+                NEON_PURPLE = '\033[35m'
+                WHITE = '\033[97m'
+                DARK_GRAY = '\033[90m'
+                DIM = '\033[2m'
+                BOLD = '\033[1m'
+                RESET = '\033[0m'
 
     if clear_func:
         clear_func()

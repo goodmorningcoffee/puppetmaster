@@ -9,6 +9,8 @@ import subprocess
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 
+from utils.colors import C
+
 # _which fallback for minimal Python installations
 try:
     from shutil import which as _which
@@ -206,17 +208,10 @@ def install_security_tools(
     Returns:
         Tuple of (success, installed_tools, failed_tools)
     """
-    # ANSI colors
-    GREEN = "\033[92m"
-    RED = "\033[91m"
-    YELLOW = "\033[93m"
-    CYAN = "\033[96m"
-    RESET = "\033[0m"
-
     if not check_apt_available():
         if verbose:
-            print(f"{RED}apt-get not available. Cannot install tools.{RESET}")
-            print(f"{YELLOW}On non-Debian systems, install manually:{RESET}")
+            print(f"{C.BRIGHT_RED}apt-get not available. Cannot install tools.{C.RESET}")
+            print(f"{C.BRIGHT_YELLOW}On non-Debian systems, install manually:{C.RESET}")
             for name, tool in SECURITY_TOOLS.items():
                 print(f"  - {tool.name}: {tool.description}")
         return False, [], list(SECURITY_TOOLS.keys())
@@ -230,11 +225,11 @@ def install_security_tools(
 
     if not tools_to_install:
         if verbose:
-            print(f"{GREEN}All requested tools are already installed.{RESET}")
+            print(f"{C.BRIGHT_GREEN}All requested tools are already installed.{C.RESET}")
         return True, [], []
 
     if verbose:
-        print(f"\n{CYAN}Installing security tools...{RESET}")
+        print(f"\n{C.BRIGHT_CYAN}Installing security tools...{C.RESET}")
         for tool_name in tools_to_install:
             tool = SECURITY_TOOLS.get(tool_name)
             if tool:
@@ -252,7 +247,7 @@ def install_security_tools(
 
     # Run apt-get update
     if verbose:
-        print(f"\n{CYAN}Updating package lists...{RESET}")
+        print(f"\n{C.BRIGHT_CYAN}Updating package lists...{C.RESET}")
 
     try:
         update_result = subprocess.run(
@@ -263,17 +258,17 @@ def install_security_tools(
         )
         if update_result.returncode != 0:
             if verbose:
-                print(f"{YELLOW}Warning: apt-get update had issues{RESET}")
+                print(f"{C.BRIGHT_YELLOW}Warning: apt-get update had issues{C.RESET}")
     except subprocess.TimeoutExpired:
         if verbose:
-            print(f"{YELLOW}Warning: apt-get update timed out{RESET}")
+            print(f"{C.BRIGHT_YELLOW}Warning: apt-get update timed out{C.RESET}")
     except Exception as e:
         if verbose:
-            print(f"{YELLOW}Warning: apt-get update failed: {e}{RESET}")
+            print(f"{C.BRIGHT_YELLOW}Warning: apt-get update failed: {e}{C.RESET}")
 
     # Install packages
     if verbose:
-        print(f"{CYAN}Installing packages: {', '.join(packages)}{RESET}")
+        print(f"{C.BRIGHT_CYAN}Installing packages: {', '.join(packages)}{C.RESET}")
 
     try:
         install_cmd = ["sudo", "apt-get", "install", "-y", "-qq"] + packages
@@ -286,16 +281,16 @@ def install_security_tools(
 
         if install_result.returncode != 0:
             if verbose:
-                print(f"{RED}Installation failed:{RESET}")
+                print(f"{C.BRIGHT_RED}Installation failed:{C.RESET}")
                 if install_result.stderr:
                     print(install_result.stderr[:500])
     except subprocess.TimeoutExpired:
         if verbose:
-            print(f"{RED}Installation timed out{RESET}")
+            print(f"{C.BRIGHT_RED}Installation timed out{C.RESET}")
         return False, [], tools_to_install
     except Exception as e:
         if verbose:
-            print(f"{RED}Installation error: {e}{RESET}")
+            print(f"{C.BRIGHT_RED}Installation error: {e}{C.RESET}")
         return False, [], tools_to_install
 
     # Verify installation
@@ -306,19 +301,19 @@ def install_security_tools(
         if check_tool_installed(tool_name):
             installed.append(tool_name)
             if verbose:
-                print(f"  {GREEN}[OK]{RESET} {tool_name}")
+                print(f"  {C.BRIGHT_GREEN}[OK]{C.RESET} {tool_name}")
         else:
             failed.append(tool_name)
             if verbose:
-                print(f"  {RED}[FAIL]{RESET} {tool_name}")
+                print(f"  {C.BRIGHT_RED}[FAIL]{C.RESET} {tool_name}")
 
     success = len(failed) == 0
 
     if verbose:
         if success:
-            print(f"\n{GREEN}All tools installed successfully!{RESET}")
+            print(f"\n{C.BRIGHT_GREEN}All tools installed successfully!{C.RESET}")
         else:
-            print(f"\n{YELLOW}Some tools failed to install: {', '.join(failed)}{RESET}")
+            print(f"\n{C.BRIGHT_YELLOW}Some tools failed to install: {', '.join(failed)}{C.RESET}")
 
     return success, installed, failed
 
@@ -495,25 +490,19 @@ def _parse_tool_output(tool_name: str, result: subprocess.CompletedProcess) -> T
 
 def print_tool_status():
     """Print status of all security tools."""
-    GREEN = "\033[92m"
-    RED = "\033[91m"
-    CYAN = "\033[96m"
-    DIM = "\033[2m"
-    RESET = "\033[0m"
-
     installed, missing = check_tools_installed()
 
-    print(f"\n{CYAN}Security Tools Status:{RESET}")
-    print(f"{DIM}{'─' * 60}{RESET}")
+    print(f"\n{C.BRIGHT_CYAN}Security Tools Status:{C.RESET}")
+    print(f"{C.DIM}{'─' * 60}{C.RESET}")
 
     for name, tool in SECURITY_TOOLS.items():
-        status = f"{GREEN}[INSTALLED]{RESET}" if name in installed else f"{RED}[MISSING]{RESET}"
-        root_badge = f"{DIM}(root){RESET}" if tool.requires_root else ""
+        status = f"{C.BRIGHT_GREEN}[INSTALLED]{C.RESET}" if name in installed else f"{C.BRIGHT_RED}[MISSING]{C.RESET}"
+        root_badge = f"{C.DIM}(root){C.RESET}" if tool.requires_root else ""
         print(f"  {status} {tool.name:12} - {tool.description} {root_badge}")
 
-    print(f"{DIM}{'─' * 60}{RESET}")
-    print(f"  Installed: {GREEN}{len(installed)}{RESET} / {len(SECURITY_TOOLS)}")
+    print(f"{C.DIM}{'─' * 60}{C.RESET}")
+    print(f"  Installed: {C.BRIGHT_GREEN}{len(installed)}{C.RESET} / {len(SECURITY_TOOLS)}")
 
     if missing:
-        print(f"  Missing: {RED}{', '.join(missing)}{RESET}")
-        print(f"\n  {DIM}Run option [3] to install missing tools{RESET}")
+        print(f"  Missing: {C.BRIGHT_RED}{', '.join(missing)}{C.RESET}")
+        print(f"\n  {C.DIM}Run option [3] to install missing tools{C.RESET}")

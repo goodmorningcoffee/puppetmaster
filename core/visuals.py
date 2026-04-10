@@ -11,45 +11,7 @@ import re
 # CYBERPUNK COLOR SCHEME
 # =============================================================================
 
-class C:
-    """Dark cyberpunk color palette"""
-    # Core colors
-    BLACK = '\033[30m'
-    RED = '\033[91m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    BLUE = '\033[94m'
-    MAGENTA = '\033[95m'
-    CYAN = '\033[96m'
-    WHITE = '\033[97m'
-
-    # Neon accents
-    NEON_PINK = '\033[38;5;198m'
-    NEON_CYAN = '\033[38;5;51m'
-    NEON_GREEN = '\033[38;5;46m'
-    NEON_ORANGE = '\033[38;5;208m'
-    NEON_PURPLE = '\033[38;5;129m'
-    NEON_RED = '\033[38;5;196m'
-
-    # Dark tones
-    DARK_GRAY = '\033[38;5;238m'
-    MED_GRAY = '\033[38;5;244m'
-    LIGHT_GRAY = '\033[38;5;250m'
-
-    # Styles
-    BOLD = '\033[1m'
-    DIM = '\033[2m'
-    ITALIC = '\033[3m'
-    UNDERLINE = '\033[4m'
-    BLINK = '\033[5m'
-    REVERSE = '\033[7m'
-    RESET = '\033[0m'
-
-    # Background
-    BG_BLACK = '\033[40m'
-    BG_RED = '\033[41m'
-    BG_GREEN = '\033[42m'
-    BG_DARK = '\033[48;5;234m'
+from utils.colors import C
 
 
 # =============================================================================

@@ -22,22 +22,7 @@ from .tools import (
 )
 
 
-# =============================================================================
-# ANSI COLORS
-# =============================================================================
-
-class C:
-    """Color constants for terminal output."""
-    RESET = "\033[0m"
-    BOLD = "\033[1m"
-    DIM = "\033[2m"
-    RED = "\033[91m"
-    GREEN = "\033[92m"
-    YELLOW = "\033[93m"
-    BLUE = "\033[94m"
-    MAGENTA = "\033[95m"
-    CYAN = "\033[96m"
-    WHITE = "\033[97m"
+from utils.colors import C
 
 
 # =============================================================================
@@ -124,9 +109,9 @@ def show_disclaimer():
     """Display the security audit limitations disclaimer."""
     # Format with colors
     text = DISCLAIMER_TEXT.format(
-        CYAN=C.CYAN, BOLD=C.BOLD, RESET=C.RESET,
-        GREEN=C.GREEN, RED=C.RED, YELLOW=C.YELLOW,
-        MAGENTA=C.MAGENTA, DIM=C.DIM
+        CYAN=C.BRIGHT_CYAN, BOLD=C.BOLD, RESET=C.RESET,
+        GREEN=C.BRIGHT_GREEN, RED=C.BRIGHT_RED, YELLOW=C.BRIGHT_YELLOW,
+        MAGENTA=C.BRIGHT_MAGENTA, DIM=C.DIM
     )
     print(text)
     try:
@@ -171,8 +156,8 @@ def audit_local(
 
     if not tools_to_run:
         if verbose:
-            print(f"{C.RED}No security tools available to run.{C.RESET}")
-            print(f"{C.YELLOW}Use option [3] to install security tools.{C.RESET}")
+            print(f"{C.BRIGHT_RED}No security tools available to run.{C.RESET}")
+            print(f"{C.BRIGHT_YELLOW}Use option [3] to install security tools.{C.RESET}")
         report.errors.append("No tools available")
         return report
 
@@ -180,11 +165,11 @@ def audit_local(
     sudo_available = check_sudo_available()
 
     if verbose:
-        print(f"\n{C.CYAN}{C.BOLD}Starting Security Audit{C.RESET}")
+        print(f"\n{C.BRIGHT_CYAN}{C.BOLD}Starting Security Audit{C.RESET}")
         print(f"{C.DIM}{'─' * 50}{C.RESET}")
-        print(f"  Host: {C.WHITE}{hostname}{C.RESET}")
-        print(f"  Tools: {C.WHITE}{', '.join(tools_to_run)}{C.RESET}")
-        print(f"  Sudo: {C.GREEN if sudo_available else C.YELLOW}{'available' if sudo_available else 'not available (some tools may fail)'}{C.RESET}")
+        print(f"  Host: {C.BRIGHT_WHITE}{hostname}{C.RESET}")
+        print(f"  Tools: {C.BRIGHT_WHITE}{', '.join(tools_to_run)}{C.RESET}")
+        print(f"  Sudo: {C.BRIGHT_GREEN if sudo_available else C.BRIGHT_YELLOW}{'available' if sudo_available else 'not available (some tools may fail)'}{C.RESET}")
         print(f"{C.DIM}{'─' * 50}{C.RESET}\n")
 
     # Run each tool
@@ -192,7 +177,7 @@ def audit_local(
         tool_info = SECURITY_TOOLS.get(tool_name)
 
         if verbose:
-            print(f"{C.CYAN}[RUNNING]{C.RESET} {tool_name}...", end=" ", flush=True)
+            print(f"{C.BRIGHT_CYAN}[RUNNING]{C.RESET} {tool_name}...", end=" ", flush=True)
 
         if on_progress:
             on_progress(tool_name, "running")
@@ -200,7 +185,7 @@ def audit_local(
         # Skip root-required tools if sudo not available
         if tool_info and tool_info.requires_root and not sudo_available:
             if verbose:
-                print(f"{C.YELLOW}[SKIPPED]{C.RESET} (requires root)")
+                print(f"{C.BRIGHT_YELLOW}[SKIPPED]{C.RESET} (requires root)")
             report.tools_skipped.append(tool_name)
             report.errors.append(f"{tool_name}: requires root/sudo")
             continue
@@ -215,11 +200,11 @@ def audit_local(
 
         if verbose:
             if not result.success:
-                print(f"{C.RED}[ERROR]{C.RESET} {result.error}")
+                print(f"{C.BRIGHT_RED}[ERROR]{C.RESET} {result.error}")
             elif result.clean:
-                print(f"{C.GREEN}[CLEAN]{C.RESET}")
+                print(f"{C.BRIGHT_GREEN}[CLEAN]{C.RESET}")
             else:
-                print(f"{C.YELLOW}[FINDINGS]{C.RESET} {len(result.findings)} issue(s)")
+                print(f"{C.BRIGHT_YELLOW}[FINDINGS]{C.RESET} {len(result.findings)} issue(s)")
 
     # Print summary
     if verbose:
@@ -234,29 +219,29 @@ def _print_audit_summary(report: AuditReport):
     print(f"{C.BOLD}AUDIT SUMMARY - {report.hostname}{C.RESET}")
     print(f"{C.DIM}{'═' * 50}{C.RESET}")
 
-    print(f"\n  Tools run: {C.WHITE}{len(report.tools_run)}{C.RESET}")
+    print(f"\n  Tools run: {C.BRIGHT_WHITE}{len(report.tools_run)}{C.RESET}")
 
     if report.tools_skipped:
-        print(f"  Tools skipped: {C.YELLOW}{len(report.tools_skipped)}{C.RESET}")
+        print(f"  Tools skipped: {C.BRIGHT_YELLOW}{len(report.tools_skipped)}{C.RESET}")
 
     if report.errors:
-        print(f"  Errors: {C.RED}{len(report.errors)}{C.RESET}")
+        print(f"  Errors: {C.BRIGHT_RED}{len(report.errors)}{C.RESET}")
 
     # Overall status
     if report.clean and not report.errors:
-        print(f"\n  {C.GREEN}{C.BOLD}STATUS: CLEAN{C.RESET}")
+        print(f"\n  {C.BRIGHT_GREEN}{C.BOLD}STATUS: CLEAN{C.RESET}")
         print(f"  {C.DIM}No issues detected by security tools.{C.RESET}")
     elif report.clean:
-        print(f"\n  {C.YELLOW}{C.BOLD}STATUS: INCOMPLETE{C.RESET}")
+        print(f"\n  {C.BRIGHT_YELLOW}{C.BOLD}STATUS: INCOMPLETE{C.RESET}")
         print(f"  {C.DIM}Some tools failed, but no issues found in completed scans.{C.RESET}")
     else:
-        print(f"\n  {C.RED}{C.BOLD}STATUS: ISSUES FOUND{C.RESET}")
+        print(f"\n  {C.BRIGHT_RED}{C.BOLD}STATUS: ISSUES FOUND{C.RESET}")
 
     # Print findings
     if report.findings:
-        print(f"\n{C.RED}Findings:{C.RESET}")
+        print(f"\n{C.BRIGHT_RED}Findings:{C.RESET}")
         for tool, findings in report.findings.items():
-            print(f"\n  {C.YELLOW}[{tool}]{C.RESET}")
+            print(f"\n  {C.BRIGHT_YELLOW}[{tool}]{C.RESET}")
             for finding in findings[:10]:  # Limit output
                 print(f"    {C.DIM}>{C.RESET} {finding}")
             if len(findings) > 10:
@@ -264,7 +249,7 @@ def _print_audit_summary(report: AuditReport):
 
     # Print warnings
     if report.warnings:
-        print(f"\n{C.YELLOW}Warnings:{C.RESET}")
+        print(f"\n{C.BRIGHT_YELLOW}Warnings:{C.RESET}")
         for tool, warnings in report.warnings.items():
             print(f"\n  {C.DIM}[{tool}]{C.RESET}")
             for warning in warnings[:5]:
@@ -305,12 +290,12 @@ def audit_workers(
             from ..discovery.distributed import SSHExecutor
         except ImportError:
             if verbose:
-                print(f"{C.RED}Cannot import SSHExecutor. Distributed audit unavailable.{C.RESET}")
+                print(f"{C.BRIGHT_RED}Cannot import SSHExecutor. Distributed audit unavailable.{C.RESET}")
             return {}
 
     if not config or not config.workers:
         if verbose:
-            print(f"{C.YELLOW}No workers configured.{C.RESET}")
+            print(f"{C.BRIGHT_YELLOW}No workers configured.{C.RESET}")
             print(f"{C.DIM}Configure workers in the SpiderFoot Control Center > Multi-EC2 C2{C.RESET}")
         return {}
 
@@ -320,10 +305,10 @@ def audit_workers(
     tools_to_run = tools if tools else list(SECURITY_TOOLS.keys())
 
     if verbose:
-        print(f"\n{C.CYAN}{C.BOLD}Distributed Security Audit{C.RESET}")
+        print(f"\n{C.BRIGHT_CYAN}{C.BOLD}Distributed Security Audit{C.RESET}")
         print(f"{C.DIM}{'─' * 50}{C.RESET}")
-        print(f"  Workers: {C.WHITE}{len(config.workers)}{C.RESET}")
-        print(f"  Tools: {C.WHITE}{', '.join(tools_to_run)}{C.RESET}")
+        print(f"  Workers: {C.BRIGHT_WHITE}{len(config.workers)}{C.RESET}")
+        print(f"  Tools: {C.BRIGHT_WHITE}{', '.join(tools_to_run)}{C.RESET}")
         print(f"{C.DIM}{'─' * 50}{C.RESET}\n")
 
     # Create SSH executor
@@ -339,7 +324,7 @@ def audit_workers(
 
         if verbose:
             nickname = getattr(worker, 'nickname', hostname)
-            print(f"\n{C.CYAN}[{nickname}]{C.RESET} {hostname}")
+            print(f"\n{C.BRIGHT_CYAN}[{nickname}]{C.RESET} {hostname}")
 
         report = AuditReport(hostname=hostname)
 
@@ -347,7 +332,7 @@ def audit_workers(
         success, msg = executor.test_connection(hostname, username)
         if not success:
             if verbose:
-                print(f"  {C.RED}Connection failed:{C.RESET} {msg}")
+                print(f"  {C.BRIGHT_RED}Connection failed:{C.RESET} {msg}")
             report.errors.append(f"Connection failed: {msg}")
             results[hostname] = report
             continue
@@ -368,7 +353,7 @@ def audit_workers(
                 continue
 
             if verbose:
-                print(f"  {C.CYAN}[RUNNING]{C.RESET} {tool_name}...", end=" ", flush=True)
+                print(f"  {C.BRIGHT_CYAN}[RUNNING]{C.RESET} {tool_name}...", end=" ", flush=True)
 
             if on_progress:
                 on_progress(hostname, tool_name, "running")
@@ -391,11 +376,11 @@ def audit_workers(
 
             if verbose:
                 if not tool_result.success:
-                    print(f"{C.RED}[ERROR]{C.RESET}")
+                    print(f"{C.BRIGHT_RED}[ERROR]{C.RESET}")
                 elif tool_result.clean:
-                    print(f"{C.GREEN}[CLEAN]{C.RESET}")
+                    print(f"{C.BRIGHT_GREEN}[CLEAN]{C.RESET}")
                 else:
-                    print(f"{C.YELLOW}[FINDINGS]{C.RESET} {len(tool_result.findings)}")
+                    print(f"{C.BRIGHT_YELLOW}[FINDINGS]{C.RESET} {len(tool_result.findings)}")
 
         results[hostname] = report
 
@@ -458,15 +443,15 @@ def _print_distributed_summary(results: Dict[str, AuditReport]):
     issue_count = sum(1 for r in results.values() if not r.clean)
     error_count = sum(1 for r in results.values() if r.errors)
 
-    print(f"\n  Total workers: {C.WHITE}{len(results)}{C.RESET}")
-    print(f"  Clean: {C.GREEN}{clean_count}{C.RESET}")
-    print(f"  Issues: {C.YELLOW if issue_count else C.DIM}{issue_count}{C.RESET}")
-    print(f"  Errors: {C.RED if error_count else C.DIM}{error_count}{C.RESET}")
+    print(f"\n  Total workers: {C.BRIGHT_WHITE}{len(results)}{C.RESET}")
+    print(f"  Clean: {C.BRIGHT_GREEN}{clean_count}{C.RESET}")
+    print(f"  Issues: {C.BRIGHT_YELLOW if issue_count else C.DIM}{issue_count}{C.RESET}")
+    print(f"  Errors: {C.BRIGHT_RED if error_count else C.DIM}{error_count}{C.RESET}")
 
     # List workers with issues
     for hostname, report in results.items():
         if not report.clean:
-            print(f"\n  {C.YELLOW}[ISSUES]{C.RESET} {hostname}")
+            print(f"\n  {C.BRIGHT_YELLOW}[ISSUES]{C.RESET} {hostname}")
             for tool, findings in report.findings.items():
                 print(f"    {tool}: {len(findings)} finding(s)")
 
@@ -486,15 +471,15 @@ def security_audit_menu():
     def get_input(prompt: str, default: str = "") -> Optional[str]:
         try:
             if default:
-                result = input(f"{C.MAGENTA}> {prompt} [{default}]: {C.RESET}").strip()
+                result = input(f"{C.BRIGHT_MAGENTA}> {prompt} [{default}]: {C.RESET}").strip()
                 return result if result else default
             else:
-                return input(f"{C.MAGENTA}> {prompt}: {C.RESET}").strip()
+                return input(f"{C.BRIGHT_MAGENTA}> {prompt}: {C.RESET}").strip()
         except (EOFError, KeyboardInterrupt):
             return None
 
     def print_menu_item(key: str, desc: str, icon: str = ""):
-        print(f"  {C.YELLOW}[{key}]{C.RESET} {icon} {desc}")
+        print(f"  {C.BRIGHT_YELLOW}[{key}]{C.RESET} {icon} {desc}")
 
     # Try to load distributed config
     distributed_config = None
@@ -519,7 +504,7 @@ def security_audit_menu():
 
         # Banner
         print(f"""
-{C.RED}{C.BOLD}
+{C.BRIGHT_RED}{C.BOLD}
   ╔═══════════════════════════════════════════════════════════╗
   ║              SECURITY AUDIT MODULE                        ║
   ║         Rootkit & System Integrity Scanner                ║
@@ -532,12 +517,12 @@ def security_audit_menu():
         # Worker status
         if has_workers:
             worker_count = len(distributed_config.workers)
-            print(f"\n  {C.CYAN}Workers configured:{C.RESET} {C.WHITE}{worker_count}{C.RESET}")
+            print(f"\n  {C.BRIGHT_CYAN}Workers configured:{C.RESET} {C.BRIGHT_WHITE}{worker_count}{C.RESET}")
         else:
             print(f"\n  {C.DIM}No workers configured (distributed audit unavailable){C.RESET}")
 
         # Menu
-        print(f"\n{C.CYAN}Options:{C.RESET}")
+        print(f"\n{C.BRIGHT_CYAN}Options:{C.RESET}")
         print_menu_item("1", "Audit Local Machine", "")
         if has_workers:
             print_menu_item("2", f"Audit All Workers ({len(distributed_config.workers)} machines)", "")
@@ -559,7 +544,7 @@ def security_audit_menu():
         elif choice == '1':
             # Local audit
             clear_screen()
-            print(f"\n{C.CYAN}Starting local security audit...{C.RESET}\n")
+            print(f"\n{C.BRIGHT_CYAN}Starting local security audit...{C.RESET}\n")
             audit_local(verbose=True)
             print(f"\n{C.DIM}Press Enter to continue...{C.RESET}")
             try:
@@ -570,13 +555,13 @@ def security_audit_menu():
         elif choice == '2':
             # Distributed audit
             if not has_workers:
-                print(f"\n{C.YELLOW}No workers configured.{C.RESET}")
+                print(f"\n{C.BRIGHT_YELLOW}No workers configured.{C.RESET}")
                 print(f"{C.DIM}Configure workers in SpiderFoot Control Center > Multi-EC2 C2{C.RESET}")
                 time.sleep(2)
                 continue
 
             clear_screen()
-            print(f"\n{C.CYAN}Starting distributed security audit...{C.RESET}\n")
+            print(f"\n{C.BRIGHT_CYAN}Starting distributed security audit...{C.RESET}\n")
             audit_workers(distributed_config, verbose=True)
             print(f"\n{C.DIM}Press Enter to continue...{C.RESET}")
             try:
@@ -590,11 +575,11 @@ def security_audit_menu():
             installed, missing = check_tools_installed()
 
             if not missing:
-                print(f"\n{C.GREEN}All security tools are already installed!{C.RESET}")
+                print(f"\n{C.BRIGHT_GREEN}All security tools are already installed!{C.RESET}")
                 time.sleep(2)
                 continue
 
-            print(f"\n{C.YELLOW}Missing tools:{C.RESET} {', '.join(missing)}")
+            print(f"\n{C.BRIGHT_YELLOW}Missing tools:{C.RESET} {', '.join(missing)}")
             confirm = get_input("Install missing tools? (y/n)", "y")
 
             if confirm and confirm.lower() == 'y':
@@ -611,5 +596,5 @@ def security_audit_menu():
             show_disclaimer()
 
         else:
-            print(f"{C.YELLOW}Invalid option{C.RESET}")
+            print(f"{C.BRIGHT_YELLOW}Invalid option{C.RESET}")
             time.sleep(1)
