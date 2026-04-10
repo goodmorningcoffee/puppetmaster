@@ -20,6 +20,7 @@ from .signals import SignalExtractor
 from .detectors import all_detectors
 from .network import NetworkAnalyzer
 from .report import generate_all_reports
+from .kali_adapter import load_infra_signals, merge_kali_signals_into
 
 # Import wildcard DNS analyzer
 try:
@@ -70,7 +71,8 @@ PROGRESS_MESSAGES = [
 def run_full_pipeline(
     input_dir: str,
     output_dir: str,
-    show_progress: bool = True
+    show_progress: bool = True,
+    kali_infra_dir: Optional[str] = None,
 ) -> bool:
     """
     Run the complete sock puppet detection pipeline.
@@ -79,6 +81,11 @@ def run_full_pipeline(
         input_dir: Directory containing SpiderFoot CSV exports
         output_dir: Directory to save results
         show_progress: Whether to show progress bars
+        kali_infra_dir: Optional path to a Kali infra analysis output dir.
+                        If provided and exists, the latest infrastructure_*.json
+                        file in that directory will be loaded and its
+                        correlations merged into the main signal pile so that
+                        Kali findings show up in the executive summary.
 
     Returns:
         bool: True if successful, False otherwise
@@ -154,6 +161,27 @@ def run_full_pipeline(
             if spinner:
                 spinner.stop("Error extracting signals")
             raise
+
+        # =====================================================================
+        # STAGE 2.5: Merge Kali infrastructure correlations (if available)
+        # =====================================================================
+        # If a Kali infra analysis dir was specified, load its latest results
+        # and merge the correlations into the main signal pile. Kali findings
+        # use signal types prefixed with `kali_` so they don't collide with
+        # the main detector signal types — they coexist as additional
+        # independent evidence per domain pair.
+        if kali_infra_dir:
+            try:
+                kali_signals = load_infra_signals(kali_infra_dir)
+                if kali_signals:
+                    new_count = merge_kali_signals_into(signals, kali_signals)
+                    print(f"  ◈ Merged {len(kali_signals)} Kali correlations "
+                          f"({new_count} new, {len(kali_signals) - new_count} merged into existing)")
+                else:
+                    print(f"  ◈ No Kali infra results found in {kali_infra_dir}")
+            except Exception as e:
+                # Never let Kali merge failure crash the main pipeline
+                print(f"  ⚠ Kali merge failed: {e}")
 
         # =====================================================================
         # STAGE 3: Network Analysis
