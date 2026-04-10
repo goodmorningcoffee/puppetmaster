@@ -41,17 +41,26 @@ class GoogleAnalyticsDetector(BaseDetector):
 class AdSenseDetector(BaseDetector):
     """Google AdSense Publisher IDs.
 
-    Migrated from signals.py SMOKING_GUN_PATTERNS['adsense'].
     AdSense pub-IDs identify a specific Google AdSense account — sharing
     one across "independent" sites means the same publisher gets paid.
+
+    Migrated from signals.py SMOKING_GUN_PATTERNS['adsense'], then tuned:
+    The legacy version had two separate patterns for `pub-NNN` and
+    `ca-pub-NNN`, which would emit two distinct signals for the same
+    publisher account when both forms appeared in the same data, AND would
+    fail to correlate two sites where one used `pub-NNN` and the other
+    used `ca-pub-NNN`. A single capture-group pattern that tolerates the
+    optional `ca-` prefix and normalizes to the digit-only form solves
+    both problems.
     """
     name = "adsense"
     tier = SignalTier.SMOKING_GUN
     description = "Google AdSense Publisher ID"
     module = "sfp_webanalytics"
+    # Capture only the digits — both `pub-1234567890` and `ca-pub-1234567890`
+    # produce the same canonical value `1234567890`.
     patterns = [
-        r"\bpub-\d{10,20}\b",          # AdSense Publisher ID
-        r"\bca-pub-\d{10,20}\b",       # AdSense with prefix
+        r"\b(?:ca-)?pub-(\d{10,20})\b",
     ]
 
 

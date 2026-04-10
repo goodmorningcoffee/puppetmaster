@@ -169,20 +169,35 @@ class WhoisRegistrantDetector(BaseDetector):
 
 
 class PhoneDetector(BaseDetector):
-    """Phone numbers.
+    """Phone numbers, with stricter formatting requirements.
 
-    Migrated from signals.py STRONG_SIGNAL_PATTERNS['phone'].
+    Migrated from signals.py STRONG_SIGNAL_PATTERNS['phone'], then tuned
+    to require explicit phone-number formatting:
 
-    KNOWN ISSUE (to be tuned in a follow-up): the current pattern matches
-    any 10-digit sequence, which can produce false positives on raw page
-    content from sfp_spider. The next iteration should require explicit
-    formatting (parens, dashes, country code prefix) to qualify.
+    1. Parenthesized area code:    (NNN) NNN-NNNN  /  (NNN)NNN-NNNN
+    2. Dash/dot/space separators:  NNN-NNN-NNNN  /  NNN.NNN.NNNN  /  NNN NNN NNNN
+    3. Explicit country code:      +N NNN NNN NNNN  /  +NN NNN NNNN
+
+    The previous regex matched any unformatted 10-digit sequence which produced
+    false positives on raw page content (account numbers, IDs, ZIP+phone runs).
+    The new patterns require at least one of: parens, separator, or +country
+    code prefix. A bare 10-digit run no longer matches.
+
+    Module is still sfp_phone (SpiderFoot pre-filters somewhat) but the
+    stricter regex protects against the noisier sfp_spider data when
+    cross-module matching happens.
     """
     name = "phone"
     tier = SignalTier.STRONG
     description = "Phone Number"
     module = "sfp_phone"
     patterns = [
-        r"\+?1?[-.\s]?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}",
-        r"\+[0-9]{1,3}[-.\s]?[0-9]{6,14}",
+        # (NNN) NNN-NNNN  /  (NNN)NNN-NNNN  /  (NNN) NNN NNNN
+        r"\(\d{3}\)\s*\d{3}[-.\s]\d{4}",
+        # NNN-NNN-NNNN  /  NNN.NNN.NNNN — separators required (not all-spaces)
+        r"\b\d{3}[-.]\d{3}[-.]\d{4}\b",
+        # +1 NNN NNN NNNN  /  +1-NNN-NNN-NNNN  /  +1.NNN.NNN.NNNN
+        r"\+1[-.\s]\d{3}[-.\s]\d{3}[-.\s]\d{4}",
+        # International: +CC NNNN... with at least one separator inside
+        r"\+\d{1,3}[-.\s]\d{1,4}[-.\s]\d{3,8}(?:[-.\s]\d{0,8})?",
     ]
