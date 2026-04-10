@@ -49,237 +49,30 @@ class Signal:
 
 # SMOKING GUNS - One match = definitive connection
 #
-# NOTE: Some signal types have been migrated to the modular detector system
-# under core/detectors/. Migrated signals are no longer defined here to avoid
-# double-counting:
-#   - google_analytics  -> core/detectors/analytics.py:GoogleAnalyticsDetector
-#   - facebook_pixel    -> core/detectors/social.py:FacebookPixelDetector
+# All signal patterns have been migrated to the modular detector system under
+# core/detectors/. These dicts remain as empty placeholders for backward
+# compatibility with any external code that imports them. New signal types
+# should be added as BaseDetector subclasses, not here.
 #
-SMOKING_GUN_PATTERNS = {
-    # Google AdSense
-    'adsense': {
-        'patterns': [
-            r'\bpub-\d{10,20}\b',              # AdSense Publisher ID (with word boundaries)
-            r'\bca-pub-\d{10,20}\b',           # AdSense with prefix
-        ],
-        'module': 'sfp_webanalytics',
-        'description': 'Google AdSense Publisher ID'
-    },
-
-    # Unique email addresses (not generic)
-    # CRITICAL: Must filter out registrar, hosting, and infrastructure emails
-    'email': {
-        'patterns': [
-            r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}',
-        ],
-        'module': None,  # Match ALL modules - emails appear in sfp_email, sfp_whois, sfp_spider, etc.
-        'description': 'Email Address',
-        'exclude_patterns': [
-            # Free email providers
-            r'@gmail\.com$', r'@yahoo\.', r'@hotmail\.',
-            r'@outlook\.', r'@aol\.com$', r'@example\.com$',
-            r'@protonmail\.', r'@icloud\.com$', r'@live\.com$',
-            r'@msn\.com$', r'@mail\.com$', r'@ymail\.com$',
-
-            # Generic prefixes (abuse, admin, etc.)
-            r'^abuse@', r'^admin@', r'^webmaster@', r'^hostmaster@',
-            r'^noreply@', r'^no-reply@', r'^support@', r'^info@',
-            r'^postmaster@', r'^security@', r'^contact@', r'^help@',
-            r'^sales@', r'^billing@', r'^legal@', r'^privacy@',
-            r'^dns@', r'^noc@', r'^registry@', r'^registrar@',
-            r'^domains?@', r'^whois@', r'^cert@', r'^csirt@',
-            r'^trustandsafety@', r'^compliance@', r'^dmca@',
-
-            # Domain registrars and WHOIS services
-            r'@markmonitor\.com$', r'@godaddy\.com$', r'@namecheap\.com$',
-            r'@enom\.com$', r'@gandi\.net$', r'@contact\.gandi\.net$',
-            r'@networksolutions\.com$', r'@register\.com$',
-            r'@tucows\.com$', r'@publicdomainregistry\.com$',
-            r'@name\.com$', r'@hover\.com$', r'@dynadot\.com$',
-            r'@porkbun\.com$', r'@epik\.com$', r'@ionos\.',
-            r'@1and1\.', r'@united-domains\.', r'@key-systems\.net$',
-            r'@sav\.com$', r'@dropped\.pl$', r'@domaincontrol\.com$',
-            r'whoisprotect', r'privacyprotect', r'domainprivacy',
-            r'contactprivacy', r'whoisprivacy', r'proxy@',
-
-            # Cloud providers (abuse/NOC contacts)
-            r'@amazon\.com$', r'@amazonaws\.com$', r'@aws\.com$',
-            r'@microsoft\.com$', r'@azure\.com$', r'@office\.com$',
-            r'@google\.com$', r'@cloud\.google\.com$',
-            r'@cloudflare\.com$', r'@akamai\.com$', r'@fastly\.com$',
-            r'@digitalocean\.com$', r'@linode\.com$', r'@vultr\.com$',
-            r'@ovh\.', r'@hetzner\.', r'@scaleway\.com$',
-
-            # Hosting providers (godaddy already listed under registrars)
-            r'@hostgator\.com$', r'@bluehost\.com$',
-            r'@siteground\.com$', r'@inmotionhosting\.com$',
-            r'@dreamhost\.com$', r'@a2hosting\.com$',
-            r'@secureserver\.net$', r'@idcloudhost\.',
-            r'@wix\.com$', r'@squarespace\.com$', r'@shopify\.com$',
-            r'@wordpress\.com$', r'@web\.com$',
-            r'@wixanswers\.com$', r'@zendesk\.com$',
-
-            # Security/CERT teams
-            r'@cert\.', r'@csirt\.', r'@us-cert\.gov$',
-            r'@ic3\.gov$', r'@fbi\.gov$', r'@interpol\.int$',
-
-            # Other infrastructure
-            r'@verisign\.com$', r'@icann\.org$', r'@iana\.org$',
-            r'@apnic\.net$', r'@arin\.net$', r'@ripe\.net$',
-            r'@lacnic\.net$', r'@afrinic\.net$',
-            r'@thnic\.co\.th$', r'@big\.jp$',
-
-            # AWS WHOIS anonymization (all domains using AWS get these)
-            r'@anonymised\.email$',
-            r'amazonaws\.[^@]+@',  # amazonaws.* prefix emails
-
-            # Sentry DSN false positive — DSN URLs (https://hex@oNNN.ingest.sentry.io/NNN)
-            # contain an @ that the email regex matches. Detected separately by SentryDSNDetector.
-            r'@o\d+\.ingest\.sentry\.io',
-            r'@[\w.-]*sentry\.io',
-
-            # Other registrar/TLD contacts picked up by SpiderFoot
-            r'@nic\.[a-z]{2,}$',  # nic.ru, nic.mx, nic.fo, etc.
-            r'@service\.aliyun\.com$',
-            r'@webnic\.cc$',
-            r'\.protect@withheldforprivacy\.com$',
-            r'@spamfree\.bookmyname\.com$',
-            r'@regprivate\.ru$',
-            r'@internationaladmin\.com$',
-            r'@hosteuropegroup\.com$',
-            r'@cscglobal\.com$', r'@cscinfo\.com$',
-            r'@o-w-o\.info$',  # Spam protection
-            r'@qq\.com$',  # Chinese free email
-            r'@163\.com$', r'@126\.com$',  # NetEase free email
-            r'@daum\.net$',  # Korean free email
-
-            # More registrar/registry abuse contacts from SpiderFoot crawling
-            r'abuse.*@',  # Any abuse email
-            r'@psi-usa\.info$', r'@eurodns\.com$', r'@opensrs\.com$',
-            r'@nexigen\.digital$', r'@dinahosting\.com$',
-            r'@hkdnr\.hk$', r'@nixi\.in$', r'@internetx\.de$',
-            r'@nazwa\.pl$', r'@dinfo\.pl$', r'@premium\.pl$',
-            r'@fareastone\.com\.tw$', r'@url\.com\.tw$', r'@net-chinese\.com\.tw$',
-            r'@sakura\.ad\.jp$', r'@wind\.ad\.jp$', r'@muumuu-domain\.com$',
-            r'@west\.cn$', r'@hezoon\.com$',
-            r'@inwimail\.com$', r'@usp\.ac\.fj$',
-            r'@ok\.is$', r'@tolvustod\.is$',
-            r'@domains\.coop$', r'@netim\.com$',
-            r'hexonet\.net$', r'kalengo\.com$',
-            r'hostpro\.ua$', r'actaprise\.com$',
-            r'sigelsberg\.com$', r'media\.us$',
-            r'advania\.com$', r'@.*registrar.*\.hk$',
-
-            # Generic TLD/registry contacts
-            r'-admin@', r'-registrant@', r'-tech@',
-            r'tld@',
-        ]
-    },
-
-    # SSL Certificate fingerprints (non-wildcard, non-LE)
-    'ssl_fingerprint': {
-        'patterns': [
-            r'\b[A-Fa-f0-9]{40}\b',  # SHA1 fingerprint
-            r'\b[A-Fa-f0-9]{64}\b',  # SHA256 fingerprint
-        ],
-        'module': 'sfp_crt',
-        'description': 'SSL Certificate Fingerprint'
-    },
-
-    # Google Site Verification
-    # NOTE: Must be careful - SpiderFoot follows DNS chains and may pick up
-    # verification tokens from cloud providers (amazonaws.com, microsoft.com)
-    # that get incorrectly attributed to customer domains
-    'google_site_verification': {
-        'patterns': [
-            r'google-site-verification[=:]\s*([A-Za-z0-9_-]{43,44})',
-            r'Google Site Verification:\s*([A-Za-z0-9_-]{20,50})',
-        ],
-        'module': 'sfp_webanalytics',
-        'description': 'Google Site Verification Token',
-        # Known tokens from major providers (false positives)
-        'exclude_patterns': [
-            r'EEVHeL7fVZb5ix5bR0draHWtJ5MfS0538OwXAfY8',  # amazonaws.com
-            r'qF4YFDz-nQ_gKOOlNIxI0rC79sLnCbrUMF9fmKlj',  # microsoft.com
-            r'cW7L-_2lD9bWyDxO79sYTdr0tKphk1quplaAfLS3pjY',  # microsoftonline-p.net (Azure AD)
-        ]
-    },
-
-    # Atlassian verification
-    'atlassian_verification': {
-        'patterns': [
-            r'atlassian-domain-verification[=:]\s*([A-Za-z0-9+/=]{30,100})',
-            r'Atlassian Domain Verification:\s*([A-Za-z0-9+/=]{30,100})',
-        ],
-        'module': 'sfp_webanalytics',
-        'description': 'Atlassian Domain Verification',
-        # Known tokens from major providers (false positives)
-        'exclude_patterns': [
-            r'ZT4AapXgobCpXIWoNcd7gtMjZyOUdr4EDFMnFUWr',  # amazonaws.com
-        ]
-    },
-}
+# Migration map:
+#   google_analytics          -> core/detectors/analytics.py
+#   adsense                   -> core/detectors/analytics.py
+#   facebook_pixel            -> core/detectors/social.py
+#   email                     -> core/detectors/identity.py
+#   ssl_fingerprint           -> core/detectors/infrastructure.py
+#   google_site_verification  -> core/detectors/verification.py
+#   atlassian_verification    -> core/detectors/verification.py
+#   whois_registrant          -> core/detectors/identity.py
+#   phone                     -> core/detectors/identity.py
+#   nameserver                -> core/detectors/infrastructure.py
+#   ip_address                -> core/detectors/infrastructure.py
+#   crypto_address            -> core/detectors/payment.py
+#
+SMOKING_GUN_PATTERNS = {}
 
 # STRONG SIGNALS - 2+ matches = likely connected
-STRONG_SIGNAL_PATTERNS = {
-    # WHOIS registrant (if not privacy-protected)
-    'whois_registrant': {
-        'patterns': [
-            r'Registrant\s+Name:\s*([^\n]+)',
-            r'Registrant\s+Organization:\s*([^\n]+)',
-        ],
-        'module': 'sfp_whois',
-        'description': 'WHOIS Registrant',
-        'exclude_patterns': [
-            r'privacy', r'redacted', r'data protected', r'withheld',
-            r'contact privacy', r'domains by proxy', r'whoisguard',
-        ]
-    },
-
-    # Phone numbers
-    'phone': {
-        'patterns': [
-            r'\+?1?[-.\s]?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}',
-            r'\+[0-9]{1,3}[-.\s]?[0-9]{6,14}',
-        ],
-        'module': 'sfp_phone',
-        'description': 'Phone Number'
-    },
-
-    # Custom/unique nameservers (not generic)
-    'nameserver': {
-        'patterns': [
-            r'ns[0-9]?\.[a-zA-Z0-9-]+\.[a-zA-Z]{2,}',
-        ],
-        'module': 'sfp_dnsresolve',
-        'description': 'Nameserver',
-        'exclude_patterns': [
-            r'cloudflare', r'awsdns', r'google', r'registrar',
-            r'domaincontrol', r'godaddy', r'namecheap', r'hostgator',
-        ]
-    },
-
-    # Shared IP (if not CDN/hosting)
-    'ip_address': {
-        'patterns': [
-            r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b',
-        ],
-        'module': 'sfp_dnsresolve',
-        'description': 'IP Address'
-    },
-
-    # NOTE: Heuristic patterns — may produce false positives on base58/hex strings
-    # Crypto addresses (already have word boundaries, adding length validation)
-    'crypto_address': {
-        'patterns': [
-            r'\b[13][a-km-zA-HJ-NP-Z1-9]{25,34}\b',      # Bitcoin (26-35 chars total)
-            r'\b0x[a-fA-F0-9]{40}\b',                     # Ethereum (42 chars total)
-            r'\bbc1[a-zA-HJ-NP-Z0-9]{39,59}\b',          # Bech32 Bitcoin (42-62 chars)
-        ],
-        'module': 'sfp_spider',
-        'description': 'Cryptocurrency Address'
-    },
-}
+# Empty — see migration map above. All STRONG signals are now BaseDetector subclasses.
+STRONG_SIGNAL_PATTERNS = {}
 
 # WEAK SIGNALS - Context only, not evidence
 WEAK_SIGNAL_PATTERNS = {

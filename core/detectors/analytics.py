@@ -1,12 +1,14 @@
 """
 analytics.py - Analytics platform detectors.
 
-Smoking-gun signals from analytics/tracking platforms. Sharing one of these
-IDs across "independent" sites is essentially a signed confession of common
-ownership — these IDs are tied to a specific account in the platform.
+Smoking-gun signals from analytics/tracking/advertising platforms. Sharing
+one of these IDs across "independent" sites is essentially a signed
+confession of common ownership — these IDs are tied to a specific account
+in the platform.
 
 Detectors:
 - GoogleAnalyticsDetector  (UA-, G-, GTM-, GT- IDs)  [migrated from signals.py]
+- AdSenseDetector          (Google AdSense pub-X IDs)  [migrated from signals.py]
 - HotjarDetector           (hjid)
 - MixpanelDetector         (mixpanel project tokens)
 - SegmentDetector          (segment writeKeys)
@@ -33,6 +35,23 @@ class GoogleAnalyticsDetector(BaseDetector):
         r"\bG-[A-Z0-9]{10,12}\b",       # GA4
         r"\bGTM-[A-Z0-9]{6,8}\b",       # Tag Manager
         r"\bGT-[A-Z0-9]{6,12}\b",       # Google Tag
+    ]
+
+
+class AdSenseDetector(BaseDetector):
+    """Google AdSense Publisher IDs.
+
+    Migrated from signals.py SMOKING_GUN_PATTERNS['adsense'].
+    AdSense pub-IDs identify a specific Google AdSense account — sharing
+    one across "independent" sites means the same publisher gets paid.
+    """
+    name = "adsense"
+    tier = SignalTier.SMOKING_GUN
+    description = "Google AdSense Publisher ID"
+    module = "sfp_webanalytics"
+    patterns = [
+        r"\bpub-\d{10,20}\b",          # AdSense Publisher ID
+        r"\bca-pub-\d{10,20}\b",       # AdSense with prefix
     ]
 
 
