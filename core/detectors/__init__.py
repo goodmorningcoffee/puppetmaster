@@ -15,11 +15,16 @@ from .base import BaseDetector
 
 def all_detectors():
     """
-    Return instantiated instances of all BaseDetector subclasses defined
-    in modules under this package.
+    Return instantiated instances of all concrete BaseDetector subclasses
+    defined in modules under this package.
 
     Walks the detectors/ directory, imports each module, and collects
-    every concrete BaseDetector subclass. Excludes the base module itself.
+    every concrete BaseDetector subclass. Skips:
+      - The `base` module itself (BaseDetector lives there)
+      - Any imported classes (only collects classes defined in the module)
+      - Abstract intermediate base classes — identified by either:
+          * an empty `name` attribute, OR
+          * a class name starting with `_` (PEP 8 convention for "private")
     """
     detectors = []
     package_path = __path__
@@ -31,13 +36,21 @@ def all_detectors():
 
         module = importlib.import_module(f"{package_name}.{module_name}")
 
-        for _, obj in inspect.getmembers(module, inspect.isclass):
+        for class_name, obj in inspect.getmembers(module, inspect.isclass):
             # Only collect concrete subclasses defined in this module
             # (skip BaseDetector itself and any imported classes)
-            if (issubclass(obj, BaseDetector)
+            if not (issubclass(obj, BaseDetector)
                     and obj is not BaseDetector
                     and obj.__module__ == module.__name__):
-                detectors.append(obj())
+                continue
+
+            # Skip abstract intermediate base classes
+            if class_name.startswith('_'):
+                continue
+            if not getattr(obj, 'name', ''):
+                continue
+
+            detectors.append(obj())
 
     return detectors
 
