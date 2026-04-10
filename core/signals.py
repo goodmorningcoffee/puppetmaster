@@ -48,19 +48,14 @@ class Signal:
 # =============================================================================
 
 # SMOKING GUNS - One match = definitive connection
+#
+# NOTE: Some signal types have been migrated to the modular detector system
+# under core/detectors/. Migrated signals are no longer defined here to avoid
+# double-counting:
+#   - google_analytics  -> core/detectors/analytics.py:GoogleAnalyticsDetector
+#   - facebook_pixel    -> core/detectors/social.py:FacebookPixelDetector
+#
 SMOKING_GUN_PATTERNS = {
-    # Google Analytics / Tag Manager
-    'google_analytics': {
-        'patterns': [
-            r'\bUA-\d{4,10}-\d{1,4}\b',        # Universal Analytics (with word boundaries)
-            r'\bG-[A-Z0-9]{10,12}\b',          # GA4
-            r'\bGTM-[A-Z0-9]{6,8}\b',          # Tag Manager
-            r'\bGT-[A-Z0-9]{6,12}\b',          # Google Tag
-        ],
-        'module': 'sfp_webanalytics',
-        'description': 'Google Analytics/Tag Manager ID'
-    },
-
     # Google AdSense
     'adsense': {
         'patterns': [
@@ -69,16 +64,6 @@ SMOKING_GUN_PATTERNS = {
         ],
         'module': 'sfp_webanalytics',
         'description': 'Google AdSense Publisher ID'
-    },
-
-    # Facebook Pixel
-    'facebook_pixel': {
-        'patterns': [
-            r'facebook[_\s]?pixel[:\s]+(\d{15,20})',
-            r'fbq\([\'"]init[\'"]\s*,\s*[\'"](\d{15,20})[\'"]',
-        ],
-        'module': 'sfp_webanalytics',
-        'description': 'Facebook Pixel ID'
     },
 
     # Unique email addresses (not generic)
@@ -147,6 +132,11 @@ SMOKING_GUN_PATTERNS = {
             # AWS WHOIS anonymization (all domains using AWS get these)
             r'@anonymised\.email$',
             r'amazonaws\.[^@]+@',  # amazonaws.* prefix emails
+
+            # Sentry DSN false positive — DSN URLs (https://hex@oNNN.ingest.sentry.io/NNN)
+            # contain an @ that the email regex matches. Detected separately by SentryDSNDetector.
+            r'@o\d+\.ingest\.sentry\.io',
+            r'@[\w.-]*sentry\.io',
 
             # Other registrar/TLD contacts picked up by SpiderFoot
             r'@nic\.[a-z]{2,}$',  # nic.ru, nic.mx, nic.fo, etc.
@@ -334,13 +324,24 @@ NOISE_PATTERNS = [
 # =============================================================================
 
 class SignalExtractor:
-    """Extract and classify signals from SpiderFoot data"""
+    """Extract and classify signals from SpiderFoot data.
 
-    def __init__(self):
+    Supports two extraction sources running in parallel:
+    1. Legacy dict-based patterns (SMOKING_GUN_PATTERNS, STRONG_SIGNAL_PATTERNS)
+    2. Detector classes (BaseDetector subclasses from core.detectors)
+
+    Both sources produce Signal objects that get merged into a single result.
+    Migration path: signals defined as detector classes should be removed from
+    the legacy dicts to avoid double-counting.
+    """
+
+    def __init__(self, detectors=None):
         # Compile regex patterns for efficiency
         self.smoking_gun_compiled = self._compile_patterns(SMOKING_GUN_PATTERNS)
         self.strong_compiled = self._compile_patterns(STRONG_SIGNAL_PATTERNS)
         self.noise_compiled = [re.compile(p, re.I) for p in NOISE_PATTERNS]
+        # Detector instances (BaseDetector subclasses) — runs alongside legacy dicts
+        self.detectors = detectors or []
 
     def _compile_patterns(self, pattern_dict: Dict) -> Dict:
         """Compile regex patterns"""
@@ -436,6 +437,10 @@ class SignalExtractor:
                             description=config['description']
                         )
                         signals.append(signal)
+
+        # Run detector classes (new modular extraction path)
+        for detector in self.detectors:
+            signals.extend(detector.extract(row))
 
         return signals
 

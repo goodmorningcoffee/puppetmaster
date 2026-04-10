@@ -17,6 +17,7 @@ from typing import Optional
 
 from .ingest import load_all_exports
 from .signals import SignalExtractor
+from .detectors import all_detectors
 from .network import NetworkAnalyzer
 from .report import generate_all_reports
 
@@ -145,7 +146,7 @@ def run_full_pipeline(
             print("-" * 50)
 
         try:
-            extractor = SignalExtractor()
+            extractor = SignalExtractor(detectors=all_detectors())
             signals = extractor.extract_all_signals(data, show_progress=show_progress)
             if spinner:
                 spinner.stop(f"Extracted {len(signals)} signals")
@@ -418,7 +419,7 @@ def run_quick_analysis(input_dir: str, output_dir: str) -> Optional[dict]:
         data = load_all_exports(input_path, show_progress=False)
 
         # Extract signals
-        extractor = SignalExtractor()
+        extractor = SignalExtractor(detectors=all_detectors())
         signals = extractor.extract_all_signals(data, show_progress=False)
 
         # Build network
