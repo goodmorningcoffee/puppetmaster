@@ -335,13 +335,32 @@ class SignalExtractor:
     the legacy dicts to avoid double-counting.
     """
 
-    def __init__(self, detectors=None):
+    # Default threshold for flood detection. A signal value shared by more
+    # than this many domains is suppressed as likely noise (e.g., a Google
+    # verification token from a cloud provider, a CDN's shared SSL cert,
+    # an analytics ID for a popular library that slipped past filtering).
+    #
+    # Tuning notes:
+    #   - Most real sock puppet networks are 5-50 domains
+    #   - Anything >100 domains sharing one ID is almost always infrastructure
+    #   - 50 is a safe middle ground; raise if you're investigating large
+    #     known networks, lower if you're getting noisy clusters
+    DEFAULT_FLOOD_THRESHOLD = 50
+
+    def __init__(self, detectors=None, flood_threshold=None):
         # Compile regex patterns for efficiency
         self.smoking_gun_compiled = self._compile_patterns(SMOKING_GUN_PATTERNS)
         self.strong_compiled = self._compile_patterns(STRONG_SIGNAL_PATTERNS)
         self.noise_compiled = [re.compile(p, re.I) for p in NOISE_PATTERNS]
         # Detector instances (BaseDetector subclasses) — runs alongside legacy dicts
         self.detectors = detectors or []
+        # Flood threshold for over-shared signal suppression
+        self.flood_threshold = (
+            flood_threshold if flood_threshold is not None
+            else self.DEFAULT_FLOOD_THRESHOLD
+        )
+        # Signals suppressed by flood filter (kept for reporting / inspection)
+        self.flood_filtered_signals: List[Signal] = []
 
     def _compile_patterns(self, pattern_dict: Dict) -> Dict:
         """Compile regex patterns"""
@@ -486,9 +505,42 @@ class SignalExtractor:
                 else:
                     all_signals[key] = signal
 
+        # Flood filter: suppress signals shared by more than flood_threshold domains.
+        # These are almost always noise — a CDN's shared cert, a cloud provider's
+        # verification token, an analytics ID for a common library, etc. — that
+        # slipped past the regex exclusion lists. Without this filter, one bad
+        # signal can produce N(N-1)/2 fake edges in the network graph and drown
+        # out real findings with a giant garbage cluster.
+        #
+        # Reset per-call so multiple pipeline runs don't accumulate state.
+        self.flood_filtered_signals = []
+        kept_signals = {}
+        for key, signal in all_signals.items():
+            if len(signal.domains) > self.flood_threshold:
+                self.flood_filtered_signals.append(signal)
+            else:
+                kept_signals[key] = signal
+
+        if self.flood_filtered_signals:
+            print(f"\n⚠ Flood filter suppressed {len(self.flood_filtered_signals)} signal(s) "
+                  f"shared by >{self.flood_threshold} domains:")
+            # Show top 10 worst offenders, sorted by domain count
+            worst = sorted(
+                self.flood_filtered_signals,
+                key=lambda s: len(s.domains),
+                reverse=True
+            )[:10]
+            for s in worst:
+                value_preview = s.value[:60] + "..." if len(s.value) > 60 else s.value
+                print(f"  - {s.signal_type:25} ({len(s.domains):4} domains) {value_preview}")
+            if len(self.flood_filtered_signals) > 10:
+                print(f"  ... and {len(self.flood_filtered_signals) - 10} more")
+            print(f"  These are likely noise (CDN, cloud provider, common library).")
+            print(f"  Adjust flood_threshold or add to NOISE_PATTERNS if a real signal was suppressed.")
+
         # Filter to only signals with 2+ domains (shared signals)
         shared_signals = {
-            k: v for k, v in all_signals.items()
+            k: v for k, v in kept_signals.items()
             if len(v.domains) >= 2
         }
 
