@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+
+{% block title %}PUPPETMASTER — Main Menu{% endblock %}
+
+{% block body %}
+
+  {# Domains-loaded banner — shown when there are pending scrape results #}
+  {% if domains_ready_for_scan %}
+    <div class="cp-msg cp-msg-success">
+      {{ domains_ready_count }} DOMAINS LOADED — Proceed to option [3] to start SpiderFoot scans!
+    </div>
+  {% endif %}
+
+  {# Welcome / what does this tool do — matches the TUI welcome text #}
+  <div class="cp-panel">
+    <div class="cp-bold cp-bright">Welcome to PUPPETMASTER!</div>
+    <div class="cp-dim">End-to-end sock puppet detection pipeline</div>
+
+    <div style="margin-top: 12px;">
+      <div class="cp-bright">What does this tool do?</div>
+      <div class="cp-dim">━━━━━━━━━━━━━━━━━━━━━━━</div>
+      <div>Discovers, scans, and analyzes domains to expose "sock puppet" networks &mdash;</div>
+      <div>websites that <u>appear</u> independent but are secretly controlled by the same operator.</div>
+    </div>
+
+    <div style="margin-top: 12px;">
+      <div class="cp-bright">The Pipeline:</div>
+      <div class="cp-dim">━━━━━━━━━━━━━</div>
+      <div><span class="cp-cyan">1. Discover</span> &nbsp; Scrape search engines for domains you suspect are sock puppets</div>
+      <div><span class="cp-cyan">2. Scan</span> &nbsp;&nbsp;&nbsp;&nbsp; Run SpiderFoot OSINT scans on scraped list (batch or interactive GUI)</div>
+      <div><span class="cp-cyan">3. Analyze</span> &nbsp;&nbsp; Analyze SpiderFoot scans to detect sock puppet clusters</div>
+    </div>
+
+    <div style="margin-top: 12px;">
+      <div class="cp-bright">What We Find:</div>
+      <div class="cp-dim">━━━━━━━━━━━━━</div>
+      <div><span class="cp-red">•</span> Same Google Analytics/AdSense IDs <span class="cp-dim">← definitive proof</span></div>
+      <div><span class="cp-yellow">•</span> Same WHOIS, nameservers, SSL certs <span class="cp-dim">← strong evidence</span></div>
+    </div>
+
+    <div style="margin-top: 12px;">
+      <span class="cp-green cp-bold">One shared unique identifier = same operator.</span>
+    </div>
+  </div>
+
+  {# Section header — Main Menu #}
+  <div class="cp-section"><span class="title cp-yellow">Main Menu</span></div>
+
+  {# Menu sections — each reproduces the TUI's print_menu_item layout #}
+  <nav class="cp-menu" aria-label="Main menu">
+
+    <div class="cp-menu-section discovery">
+      <div class="cp-menu-section-title">DISCOVERY &amp; SCANNING</div>
+      <button class="cp-menu-item" data-route="/menu/scrape" data-key="1">
+        <span class="key">[1]</span><span class="icon">🔍</span><span class="label">Scrape domains via keywords</span>
+      </button>
+      <button class="cp-menu-item" data-route="/menu/load-domains" data-key="2">
+        <span class="key">[2]</span><span class="icon">📂</span><span class="label">Load domains from file</span>
+      </button>
+      <button class="cp-menu-item" data-route="/menu/delete-lists" data-key="d">
+        <span class="key">[D]</span><span class="icon">🗑️</span><span class="label">Delete/Modify domain lists</span>
+      </button>
+      <button class="cp-menu-item" data-route="/menu/spiderfoot" data-key="3">
+        <span class="key">[3]</span><span class="icon">🕷️</span><span class="label">SpiderFoot Control Center (scans, GUI, DB)</span>
+      </button>
+      <button class="cp-menu-item" data-route="/menu/scan-status" data-key="4">
+        <span class="key">[4]</span><span class="icon">📋</span><span class="label">Check scan queue status</span>
+      </button>
+    </div>
+
+    <div class="cp-menu-section analysis">
+      <div class="cp-menu-section-title">ANALYSIS</div>
+      <button class="cp-menu-item" data-route="/menu/analysis" data-key="5">
+        <span class="key">[5]</span><span class="icon">🎭</span><span class="label">Run Puppet Analysis on SpiderFoot scans</span>
+      </button>
+      <button class="cp-menu-item" data-route="/menu/results" data-key="6">
+        <span class="key">[6]</span><span class="icon">📊</span><span class="label">View previous results</span>
+      </button>
+      <button class="cp-menu-item" data-route="/menu/wildcard" data-key="11">
+        <span class="key">[11]</span><span class="icon">📡</span><span class="label">Signal//Noise Wildcard DNS Analyzer</span>
+      </button>
+    </div>
+
+    <div class="cp-menu-section settings">
+      <div class="cp-menu-section-title">SETTINGS</div>
+      <button class="cp-menu-item" data-route="/menu/config" data-key="7">
+        <span class="key">[7]</span><span class="icon">⚙️</span><span class="label">Configuration</span>
+      </button>
+      <button class="cp-menu-item" data-route="/help" data-key="8">
+        <span class="key">[8]</span><span class="icon">❓</span><span class="label">Help &amp; Documentation</span>
+      </button>
+      <button class="cp-menu-item" data-route="/menu/queue" data-key="12">
+        <span class="key">[12]</span><span class="icon">📋</span><span class="label">Domain queue manager</span>
+      </button>
+    </div>
+
+    <div class="cp-menu-section security">
+      <div class="cp-menu-section-title">SECURITY</div>
+      <button class="cp-menu-item" data-route="/menu/security" data-key="s">
+        <span class="key">[S]</span><span class="icon">🛡️</span><span class="label">Security Audit (rootkit detection)</span>
+      </button>
+    </div>
+
+  </nav>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Auto-focus the first menu item on page load
+  document.addEventListener('DOMContentLoaded', () => {
+    const first = document.querySelector('.cp-menu-item');
+    if (first) first.focus();
+  });
+
+  // Hook up clicks to navigate
+  document.querySelectorAll('.cp-menu-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const route = btn.dataset.route;
+      if (route) window.location.href = route;
+    });
+  });
+</script>
+{% endblock %}

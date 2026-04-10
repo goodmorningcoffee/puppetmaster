@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block title %}PUPPETMASTER — How It Works{% endblock %}
+
+{% block body %}
+
+  <div class="cp-section"><span class="title cp-cyan">How PUPPETMASTER Works</span></div>
+
+  <div class="cp-panel">
+    <div class="cp-panel-title">WHAT IS THIS TOOL?</div>
+    <p>PUPPETMASTER analyzes SpiderFoot OSINT scan data to identify "sock puppet"
+    networks &mdash; groups of websites that appear independent but are actually
+    controlled by the same entity.</p>
+  </div>
+
+  <div class="cp-panel cp-panel-green">
+    <div class="cp-panel-title">COMPLETE WORKFLOW</div>
+
+    <p><span class="cp-cyan cp-bold">Step 1: DISCOVER</span> &mdash; Find domains to investigate</p>
+    <ul>
+      <li>Use option <span class="cp-yellow">[1]</span> to scrape domains from keywords</li>
+      <li>Or use option <span class="cp-yellow">[2]</span> to load your own domain list</li>
+    </ul>
+
+    <p><span class="cp-cyan cp-bold">Step 2: SCAN</span> &mdash; Run SpiderFoot on those domains</p>
+    <ul>
+      <li>Use option <span class="cp-yellow">[3]</span> to batch scan all domains</li>
+      <li>Scans run in parallel (configurable)</li>
+      <li>Progress is saved &mdash; you can resume if interrupted</li>
+    </ul>
+
+    <p><span class="cp-cyan cp-bold">Step 3: ANALYZE</span> &mdash; Find connections between domains</p>
+    <ul>
+      <li>Use option <span class="cp-yellow">[5]</span> to analyze the SpiderFoot exports</li>
+      <li>PUPPETMASTER finds shared infrastructure (analytics IDs, certs, contacts...)</li>
+    </ul>
+
+    <p><span class="cp-cyan cp-bold">Step 4: REVIEW</span> &mdash; Examine the findings</p>
+    <ul>
+      <li>Use option <span class="cp-yellow">[6]</span> to view previous results</li>
+      <li>Drill down into clusters of connected domains</li>
+    </ul>
+  </div>
+
+  <div class="cp-panel cp-panel-yellow">
+    <div class="cp-panel-title">THE SIGNAL HIERARCHY</div>
+    <p>PUPPETMASTER classifies evidence into three tiers:</p>
+    <ul>
+      <li><span class="cp-red cp-bold">SMOKING_GUN</span> &mdash; one match = definitive connection
+        (Google Analytics IDs, AdSense pubs, SSL fingerprints, unique emails...)</li>
+      <li><span class="cp-yellow cp-bold">STRONG</span> &mdash; 2+ matches = likely connection
+        (custom nameservers, IPs, WHOIS, phone numbers, crypto addresses...)</li>
+      <li><span class="cp-dim">WEAK</span> &mdash; context only, not evidence
+        (CDNs, hosting, common libraries)</li>
+    </ul>
+    <p><span class="cp-green cp-bold">One shared unique identifier = same operator.</span></p>
+  </div>
+
+  <nav class="cp-menu" style="margin-top: 24px;">
+    <button class="cp-menu-item" data-route="/help" data-key="b">
+      <span class="key">[B]</span><span class="icon">←</span><span class="label">Back to Help menu</span>
+    </button>
+  </nav>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const first = document.querySelector('.cp-menu-item');
+    if (first) first.focus();
+  });
+  document.querySelectorAll('.cp-menu-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const route = btn.dataset.route;
+      if (route) window.location.href = route;
+    });
+  });
+</script>
+{% endblock %}

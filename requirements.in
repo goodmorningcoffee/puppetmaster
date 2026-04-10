@@ -47,3 +47,7 @@ rich>=13.0.0,<14.0
 
 # System monitoring (for CPU/MEM/DISK stats in HUD)
 psutil>=5.9.0,<7.0
+
+# Web GUI (puppetmaster/web/) — TUI-aesthetic browser interface
+# Optional: only required if you want to use the web GUI; CLI works without it.
+flask>=3.0.0,<4.0

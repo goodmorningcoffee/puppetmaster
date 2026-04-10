@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block title %}PUPPETMASTER — Signal Types{% endblock %}
+
+{% block body %}
+
+  <div class="cp-section"><span class="title cp-cyan">Signal Types Explained</span></div>
+
+  <div class="cp-panel cp-panel-red">
+    <div class="cp-panel-title">🔴 SMOKING_GUN signals (one match = confirmed)</div>
+    <p>These are unique identifiers tied to a specific account in some service.
+    Sharing one across "independent" sites is essentially a signed confession.</p>
+    <table class="cp-table">
+      <tr><th>Signal</th><th>What it identifies</th></tr>
+      <tr><td>google_analytics</td><td>UA-, G-, GTM-, GT- IDs (Google account)</td></tr>
+      <tr><td>adsense</td><td>pub-N AdSense publisher account</td></tr>
+      <tr><td>facebook_pixel</td><td>Facebook Pixel ID (FB Business account)</td></tr>
+      <tr><td>hotjar</td><td>Hotjar site ID</td></tr>
+      <tr><td>mixpanel_token</td><td>Mixpanel project token</td></tr>
+      <tr><td>segment_writekey</td><td>Segment write key</td></tr>
+      <tr><td>heap_appid</td><td>Heap analytics app ID</td></tr>
+      <tr><td>matomo_tracker</td><td>Matomo / Piwik tracker URL</td></tr>
+      <tr><td>sentry_dsn</td><td>Sentry DSN (project key)</td></tr>
+      <tr><td>stripe_pk_live</td><td>Stripe publishable key (live mode)</td></tr>
+      <tr><td>disqus_shortname</td><td>Disqus forum identifier</td></tr>
+      <tr><td>ssl_fingerprint</td><td>SHA1/SHA256 SSL cert fingerprint</td></tr>
+      <tr><td>email</td><td>Unique contact email (heavily noise-filtered)</td></tr>
+      <tr><td>google_site_verification</td><td>Search Console verification token</td></tr>
+      <tr><td>atlassian_verification</td><td>Atlassian domain verification</td></tr>
+    </table>
+  </div>
+
+  <div class="cp-panel cp-panel-yellow">
+    <div class="cp-panel-title">🟡 STRONG signals (2+ matches = likely)</div>
+    <p>These are meaningful but not definitive. They need corroborating evidence.</p>
+    <table class="cp-table">
+      <tr><th>Signal</th><th>What it identifies</th></tr>
+      <tr><td>whois_registrant</td><td>WHOIS registrant name/org (when not privacy-protected)</td></tr>
+      <tr><td>phone</td><td>Formatted phone number</td></tr>
+      <tr><td>nameserver</td><td>Custom (non-CDN) DNS nameserver</td></tr>
+      <tr><td>ip_address</td><td>Shared IP address</td></tr>
+      <tr><td>crypto_address</td><td>Bitcoin / Ethereum / Bech32 wallet address</td></tr>
+      <tr><td>copyright_text</td><td>Normalized copyright/footer text fingerprint</td></tr>
+      <tr><td>favicon_hash</td><td>MD5 of fetched favicon (Shodan-style)</td></tr>
+      <tr><td>registration_week</td><td>Domain creation date bucketed to ISO week</td></tr>
+      <tr><td>cert_issuance_week</td><td>SSL cert issuance date bucketed to ISO week</td></tr>
+    </table>
+  </div>
+
+  <div class="cp-panel">
+    <div class="cp-panel-title cp-dim">⚪ WEAK / NOISE (filtered out)</div>
+    <p>CDNs (Cloudflare, AWS, Akamai, Fastly), common libraries (jQuery, Bootstrap),
+    cloud provider abuse contacts, generic email prefixes (admin@, info@, ...),
+    privacy-protected WHOIS markers, and ~150 other noise patterns are explicitly
+    excluded.</p>
+    <p>The flood filter additionally suppresses any signal value shared by more
+    than 50 domains as likely noise (configurable).</p>
+  </div>
+
+  <nav class="cp-menu" style="margin-top: 24px;">
+    <button class="cp-menu-item" data-route="/help" data-key="b">
+      <span class="key">[B]</span><span class="icon">←</span><span class="label">Back to Help menu</span>
+    </button>
+  </nav>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const first = document.querySelector('.cp-menu-item');
+    if (first) first.focus();
+  });
+  document.querySelectorAll('.cp-menu-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const route = btn.dataset.route;
+      if (route) window.location.href = route;
+    });
+  });
+</script>
+{% endblock %}

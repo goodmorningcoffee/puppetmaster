@@ -141,6 +141,14 @@ from pm_scan_monitoring import (
     check_scan_status_menu, manage_domain_queue_menu,
 )
 from pm_analysis import run_analysis, run_wildcard_analyzer
+# Web GUI launcher (Flask-backed; degrades gracefully if Flask not installed)
+try:
+    from pm_web_launcher import launch_web_gui
+    _WEB_GUI_AVAILABLE = True
+except ImportError:
+    _WEB_GUI_AVAILABLE = False
+    def launch_web_gui(*args, **kwargs):
+        raise ImportError("Flask not installed — pip install flask")
 
 # =============================================================================
 # MAIN MENU
@@ -244,6 +252,11 @@ websites that {C.UNDERLINE}appear{C.RESET}{C.DIM} independent but are secretly c
     # Security Section
     print(f"  {C.BRIGHT_RED}SECURITY{C.RESET}")
     print_menu_item("S", "Security Audit (rootkit detection)", "🛡️")
+    print()
+
+    # Web GUI Section
+    print(f"  {C.BRIGHT_CYAN}WEB GUI{C.RESET}")
+    print_menu_item("W", "Launch Web GUI (browser interface)", "🌐")
     print()
 
     # Kali Enhanced Mode Section (only shown when Kali is detected)
@@ -419,6 +432,17 @@ def main():
                 security_audit_menu()
             except ImportError as e:
                 print_error(f"Security module not available: {e}")
+                time.sleep(2)
+        # Web GUI launcher
+        elif choice == 'w':
+            try:
+                launch_web_gui()
+            except ImportError as e:
+                print_error(f"Web GUI not available: {e}")
+                print_info("Install Flask: pip install flask")
+                time.sleep(3)
+            except Exception as e:
+                print_error(f"Failed to launch Web GUI: {e}")
                 time.sleep(2)
         # Kali Enhanced Mode options
         elif choice.startswith('k') and KALI_MODULE_AVAILABLE:

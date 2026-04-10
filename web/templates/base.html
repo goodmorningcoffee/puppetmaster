@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}PUPPETMASTER{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/cyberpunk.css') }}">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <div class="cp-app">
+
+    {# ===== Banner — ASCII PUPPETMASTER logo, matches the TUI exactly ===== #}
+    <div class="cp-banner">
+      <pre>
+<span class="puppet">██████╗ ██╗   ██╗██████╗ ██████╗ ███████╗████████╗</span>
+<span class="puppet">██╔══██╗██║   ██║██╔══██╗██╔══██╗██╔════╝╚══██╔══╝</span>
+<span class="puppet">██████╔╝██║   ██║██████╔╝██████╔╝█████╗     ██║   </span>
+<span class="puppet">██╔═══╝ ██║   ██║██╔═══╝ ██╔═══╝ ██╔══╝     ██║   </span>
+<span class="puppet">██║     ╚██████╔╝██║     ██║     ███████╗   ██║   </span>
+<span class="puppet">╚═╝      ╚═════╝ ╚═╝     ╚═╝     ╚══════╝   ╚═╝   </span>
+
+<span class="master">███╗   ███╗ █████╗ ███████╗████████╗███████╗██████╗ </span>
+<span class="master">████╗ ████║██╔══██╗██╔════╝╚══██╔══╝██╔════╝██╔══██╗</span>
+<span class="master">██╔████╔██║███████║███████╗   ██║   █████╗  ██████╔╝</span>
+<span class="master">██║╚██╔╝██║██╔══██║╚════██║   ██║   ██╔══╝  ██╔══██╗</span>
+<span class="master">██║ ╚═╝ ██║██║  ██║███████║   ██║   ███████╗██║  ██║</span>
+<span class="master">╚═╝     ╚═╝╚═╝  ╚═╝╚══════╝   ╚═╝   ╚══════╝╚═╝  ╚═╝</span>
+
+<span class="info-bright">SpiderFoot Sock Puppet Detector v2.0</span>
+<span class="info-dim">Vibe coded with Claude | Prompted by deliciousnoodles</span>
+<span class="info-dim">"good morning coffee with bacon egg and cheese"</span></pre>
+    </div>
+
+    {# ===== Status line — system vitals + scan status (live via SSE) ===== #}
+    <div class="cp-status">
+      <div>
+        <span class="label">⟨ STATUS ⟩</span>
+        <span class="value" id="scan-status">Idle</span>
+      </div>
+      <div class="vitals">
+        <div class="vital" id="vital-cpu">
+          <span>CPU</span>
+          <span class="bar"><span class="fill"></span></span>
+          <span class="pct">0%</span>
+        </div>
+        <div class="vital" id="vital-mem">
+          <span>MEM</span>
+          <span class="bar"><span class="fill"></span></span>
+          <span class="pct">0%</span>
+        </div>
+        <div class="vital" id="vital-disk">
+          <span>DSK</span>
+          <span class="bar"><span class="fill"></span></span>
+          <span class="pct">0%</span>
+        </div>
+      </div>
+    </div>
+
+    {# ===== Main body slot — each screen overrides this ===== #}
+    <main class="cp-body">
+      {% block body %}{% endblock %}
+    </main>
+
+    {# ===== Footer — keyboard shortcut hints ===== #}
+    <footer class="cp-footer">
+      <span class="key">↑↓</span> Navigate
+      &nbsp;|&nbsp;
+      <span class="key">Enter</span> Select
+      &nbsp;|&nbsp;
+      <span class="key">Esc</span> Back
+      &nbsp;|&nbsp;
+      <span class="key">Tab</span> Next
+    </footer>
+
+  </div>
+
+  {# ===== JS — keyboard navigation + SSE vitals ===== #}
+  <script src="{{ url_for('static', filename='js/keynav.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/sse.js') }}"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,411 @@
+/* ============================================================================
+ * cyberpunk.css — TUI-aesthetic theme for the PUPPETMASTER web GUI
+ *
+ * The goal: make the web app look as close as possible to the existing
+ * Rich-based cyberpunk HUD (cyberpunk_hud.py / cyberpunk_ui.py). Same
+ * box-drawing characters, same color palette, same monospace feel.
+ *
+ * Color palette is mapped from utils/colors.py — see that file for the
+ * canonical ANSI codes that these hex equivalents represent.
+ * ============================================================================ */
+
+/* ----------------------------------------------------------------------------
+ * Color tokens (mapped from utils/colors.py ANSI codes)
+ * ---------------------------------------------------------------------------- */
+:root {
+  /* Standard ANSI -> hex */
+  --cp-black: #000000;
+  --cp-red: #cc0000;
+  --cp-green: #00cc00;
+  --cp-yellow: #cccc00;
+  --cp-blue: #4d94ff;       /* tweaked from pure blue for readability on dark bg */
+  --cp-magenta: #cc00cc;
+  --cp-cyan: #00cccc;
+  --cp-white: #cccccc;
+
+  /* Bright ANSI -> hex */
+  --cp-bright-black: #4d4d4d;
+  --cp-bright-red: #ff5555;
+  --cp-bright-green: #55ff55;
+  --cp-bright-yellow: #ffff55;
+  --cp-bright-blue: #6699ff;
+  --cp-bright-magenta: #ff55ff;
+  --cp-bright-cyan: #55ffff;
+  --cp-bright-white: #ffffff;
+
+  /* Neon 256-color accents (the cyberpunk theme's signature colors) */
+  --cp-neon-pink:   #ff0087;   /* 38;5;198 */
+  --cp-neon-cyan:   #00ffff;   /* 38;5;51  */
+  --cp-neon-green:  #00ff00;   /* 38;5;46  */
+  --cp-neon-orange: #ff8700;   /* 38;5;208 */
+  --cp-neon-purple: #af00ff;   /* 38;5;129 */
+  --cp-neon-red:    #ff0000;   /* 38;5;196 */
+
+  /* Grayscale tones */
+  --cp-dark-gray:  #444444;   /* 38;5;238 */
+  --cp-med-gray:   #808080;   /* 38;5;244 */
+  --cp-light-gray: #bcbcbc;   /* 38;5;250 */
+
+  /* Backgrounds */
+  --cp-bg-black: #000000;
+  --cp-bg-dark:  #121212;     /* 48;5;234 — slightly darker than #1c1c1c for OLED contrast */
+  --cp-bg-panel: #1a1a1a;
+  --cp-bg-hover: #252525;
+
+  /* Effects */
+  --cp-glow-cyan: 0 0 6px var(--cp-neon-cyan), 0 0 12px rgba(0, 255, 255, 0.4);
+  --cp-glow-pink: 0 0 6px var(--cp-neon-pink), 0 0 12px rgba(255, 0, 135, 0.4);
+  --cp-glow-yellow: 0 0 4px var(--cp-bright-yellow);
+
+  /* Layout */
+  --cp-border-width: 1px;
+  --cp-border-style: solid;
+  --cp-radius: 0;             /* sharp edges, no rounding (TUI feel) */
+  --cp-pad: 12px;
+
+  /* Typography */
+  --cp-font: 'JetBrains Mono', 'Fira Code', 'Consolas', 'Liberation Mono',
+             'Menlo', 'Monaco', 'Courier New', monospace;
+  --cp-font-size: 14px;
+  --cp-line-height: 1.4;
+}
+
+/* ----------------------------------------------------------------------------
+ * Reset + base
+ * ---------------------------------------------------------------------------- */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--cp-bg-dark);
+  color: var(--cp-bright-white);
+  font-family: var(--cp-font);
+  font-size: var(--cp-font-size);
+  line-height: var(--cp-line-height);
+  min-height: 100vh;
+}
+
+body {
+  padding: 16px;
+}
+
+a {
+  color: var(--cp-neon-cyan);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+  text-shadow: var(--cp-glow-cyan);
+}
+
+pre {
+  font-family: var(--cp-font);
+  margin: 0;
+  white-space: pre;
+  color: var(--cp-bright-white);
+}
+
+button {
+  font-family: var(--cp-font);
+  font-size: var(--cp-font-size);
+  background: transparent;
+  border: var(--cp-border-width) var(--cp-border-style) transparent;
+  color: var(--cp-bright-white);
+  cursor: pointer;
+  padding: 4px 12px;
+  text-align: left;
+}
+
+input[type="text"], input[type="number"], textarea, select {
+  font-family: var(--cp-font);
+  font-size: var(--cp-font-size);
+  background: var(--cp-bg-black);
+  color: var(--cp-bright-white);
+  border: 1px solid var(--cp-dark-gray);
+  padding: 6px 10px;
+}
+input[type="text"]:focus,
+input[type="number"]:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--cp-neon-cyan);
+  box-shadow: var(--cp-glow-cyan);
+}
+
+/* ----------------------------------------------------------------------------
+ * Layout — full-screen "terminal" with banner / status / body / footer
+ * ---------------------------------------------------------------------------- */
+.cp-app {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* ----------------------------------------------------------------------------
+ * Banner — the ASCII PUPPETMASTER logo, rendered as <pre>
+ * ---------------------------------------------------------------------------- */
+.cp-banner {
+  border: var(--cp-border-width) var(--cp-border-style) var(--cp-neon-cyan);
+  padding: 16px 24px;
+  margin-bottom: 16px;
+  color: var(--cp-neon-cyan);
+  text-shadow: var(--cp-glow-cyan);
+  background: var(--cp-bg-black);
+}
+
+.cp-banner pre {
+  color: inherit;
+}
+
+.cp-banner .puppet { color: var(--cp-neon-pink); text-shadow: var(--cp-glow-pink); }
+.cp-banner .master { color: var(--cp-bright-yellow); text-shadow: var(--cp-glow-yellow); }
+.cp-banner .info { color: var(--cp-light-gray); text-shadow: none; }
+.cp-banner .info-bright { color: var(--cp-bright-white); }
+.cp-banner .info-dim { color: var(--cp-med-gray); }
+
+/* ----------------------------------------------------------------------------
+ * Status line + vitals — top-of-page system info, updates via SSE
+ * ---------------------------------------------------------------------------- */
+.cp-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: var(--cp-border-width) var(--cp-border-style) var(--cp-neon-pink);
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  background: var(--cp-bg-panel);
+  font-size: 13px;
+}
+
+.cp-status .label {
+  color: var(--cp-neon-pink);
+  text-shadow: var(--cp-glow-pink);
+  margin-right: 8px;
+}
+.cp-status .value {
+  color: var(--cp-bright-white);
+}
+.cp-status .vitals {
+  display: flex;
+  gap: 16px;
+}
+.cp-status .vital {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cp-status .vital .bar {
+  display: inline-block;
+  width: 60px;
+  height: 8px;
+  background: var(--cp-bg-black);
+  border: 1px solid var(--cp-dark-gray);
+  position: relative;
+}
+.cp-status .vital .bar .fill {
+  display: block;
+  height: 100%;
+  background: var(--cp-neon-cyan);
+  width: 0%;
+  transition: width 0.3s ease;
+}
+.cp-status .vital.warn .fill { background: var(--cp-bright-yellow); }
+.cp-status .vital.crit .fill { background: var(--cp-neon-red); }
+
+/* ----------------------------------------------------------------------------
+ * Panel — themed container for sections of content
+ * ---------------------------------------------------------------------------- */
+.cp-panel {
+  border: var(--cp-border-width) var(--cp-border-style) var(--cp-neon-cyan);
+  padding: var(--cp-pad);
+  margin-bottom: 16px;
+  background: var(--cp-bg-panel);
+}
+
+.cp-panel.cp-panel-pink { border-color: var(--cp-neon-pink); }
+.cp-panel.cp-panel-green { border-color: var(--cp-neon-green); }
+.cp-panel.cp-panel-yellow { border-color: var(--cp-bright-yellow); }
+.cp-panel.cp-panel-red { border-color: var(--cp-neon-red); }
+
+.cp-panel-title {
+  color: var(--cp-neon-cyan);
+  text-shadow: var(--cp-glow-cyan);
+  font-weight: bold;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--cp-dark-gray);
+  padding-bottom: 4px;
+}
+.cp-panel.cp-panel-pink .cp-panel-title { color: var(--cp-neon-pink); text-shadow: var(--cp-glow-pink); }
+.cp-panel.cp-panel-green .cp-panel-title { color: var(--cp-neon-green); }
+.cp-panel.cp-panel-yellow .cp-panel-title { color: var(--cp-bright-yellow); text-shadow: var(--cp-glow-yellow); }
+
+/* ----------------------------------------------------------------------------
+ * Section header — "━━━━━━━" rule with bold title (matches print_section)
+ * ---------------------------------------------------------------------------- */
+.cp-section {
+  margin-top: 24px;
+  margin-bottom: 12px;
+  color: var(--cp-bright-cyan);
+}
+.cp-section::before,
+.cp-section::after {
+  content: "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+  display: block;
+  color: inherit;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.cp-section .title {
+  color: var(--cp-bright-white);
+  font-weight: bold;
+  padding: 4px 8px;
+  display: block;
+}
+
+/* ----------------------------------------------------------------------------
+ * Menu — list of [N] item entries, arrow-key navigable + clickable
+ * ---------------------------------------------------------------------------- */
+.cp-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.cp-menu-section {
+  margin-bottom: 16px;
+}
+.cp-menu-section-title {
+  color: var(--cp-bright-cyan);
+  font-weight: bold;
+  margin-bottom: 4px;
+  padding-left: 4px;
+}
+.cp-menu-section.discovery .cp-menu-section-title { color: var(--cp-bright-cyan); }
+.cp-menu-section.analysis .cp-menu-section-title { color: var(--cp-bright-green); }
+.cp-menu-section.settings .cp-menu-section-title { color: var(--cp-bright-magenta); }
+.cp-menu-section.security .cp-menu-section-title { color: var(--cp-bright-red); }
+
+.cp-menu-item {
+  display: flex;
+  align-items: center;
+  padding: 4px 12px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--cp-bright-white);
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+.cp-menu-item:focus,
+.cp-menu-item:hover {
+  outline: none;
+  border-color: var(--cp-neon-cyan);
+  box-shadow: var(--cp-glow-cyan);
+  background: var(--cp-bg-hover);
+  color: var(--cp-neon-cyan);
+}
+.cp-menu-item .key {
+  color: var(--cp-bright-yellow);
+  margin-right: 8px;
+  display: inline-block;
+  min-width: 32px;
+}
+.cp-menu-item .icon {
+  margin-right: 8px;
+  display: inline-block;
+  min-width: 24px;
+  text-align: center;
+}
+.cp-menu-item .label {
+  flex: 1;
+}
+
+/* ----------------------------------------------------------------------------
+ * Notification banners (success, warning, error, info) — match print_*
+ * ---------------------------------------------------------------------------- */
+.cp-msg {
+  padding: 8px 16px;
+  margin: 8px 0;
+  border-left: 4px solid;
+  background: var(--cp-bg-panel);
+}
+.cp-msg-success { color: var(--cp-bright-green); border-left-color: var(--cp-bright-green); }
+.cp-msg-error   { color: var(--cp-bright-red);   border-left-color: var(--cp-bright-red); }
+.cp-msg-warning { color: var(--cp-bright-yellow); border-left-color: var(--cp-bright-yellow); }
+.cp-msg-info    { color: var(--cp-bright-cyan);  border-left-color: var(--cp-bright-cyan); }
+.cp-msg::before {
+  display: inline-block;
+  margin-right: 8px;
+  font-weight: bold;
+}
+.cp-msg-success::before { content: "✓"; }
+.cp-msg-error::before   { content: "✗"; }
+.cp-msg-warning::before { content: "⚠"; }
+.cp-msg-info::before    { content: "ℹ"; }
+
+/* ----------------------------------------------------------------------------
+ * Tables — themed for displaying signal/cluster/connection data
+ * ---------------------------------------------------------------------------- */
+.cp-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+}
+.cp-table th,
+.cp-table td {
+  padding: 6px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--cp-dark-gray);
+}
+.cp-table th {
+  color: var(--cp-neon-cyan);
+  text-shadow: var(--cp-glow-cyan);
+  font-weight: bold;
+  border-bottom-color: var(--cp-neon-cyan);
+}
+.cp-table tr:hover {
+  background: var(--cp-bg-hover);
+}
+.cp-table td.smoking-gun  { color: var(--cp-bright-red); }
+.cp-table td.strong       { color: var(--cp-bright-yellow); }
+.cp-table td.weak         { color: var(--cp-med-gray); }
+
+/* ----------------------------------------------------------------------------
+ * Footer / hint bar — keyboard shortcut help
+ * ---------------------------------------------------------------------------- */
+.cp-footer {
+  margin-top: 24px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--cp-dark-gray);
+  color: var(--cp-med-gray);
+  font-size: 12px;
+  text-align: center;
+}
+.cp-footer .key {
+  color: var(--cp-bright-yellow);
+  padding: 0 4px;
+}
+
+/* ----------------------------------------------------------------------------
+ * Utility classes
+ * ---------------------------------------------------------------------------- */
+.cp-dim { color: var(--cp-med-gray); }
+.cp-bright { color: var(--cp-bright-white); }
+.cp-bold { font-weight: bold; }
+.cp-mono { font-family: var(--cp-font); }
+.cp-cyan { color: var(--cp-neon-cyan); text-shadow: var(--cp-glow-cyan); }
+.cp-pink { color: var(--cp-neon-pink); text-shadow: var(--cp-glow-pink); }
+.cp-green { color: var(--cp-bright-green); }
+.cp-yellow { color: var(--cp-bright-yellow); text-shadow: var(--cp-glow-yellow); }
+.cp-red { color: var(--cp-bright-red); }
+
+/* Hide focus ring on the body itself but keep it on focusable items */
+body:focus {
+  outline: none;
+}
