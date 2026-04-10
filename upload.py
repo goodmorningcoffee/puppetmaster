@@ -562,8 +562,8 @@ def get_ec2_address():
             return response
 
     print(f"\n{Colors.BRIGHT_CYAN}Enter EC2 address:{Colors.RESET}")
-    print(f"  Examples: ec2-54-211-76-29.compute-1.amazonaws.com")
-    print(f"            54.211.76.29")
+    print(f"  Examples: ec2-203-0-113-10.compute-1.amazonaws.com")
+    print(f"            203.0.113.10")
 
     host = sanitize_input(input(f"\n{Colors.BOLD}EC2 address: {Colors.RESET}"))
 
@@ -726,9 +726,9 @@ def main():
   python3 upload.py --no-cleanup                 # Skip killing old processes
 
 {Colors.BOLD}Examples:{Colors.RESET}
-  python3 upload.py ec2-54-211-76-29.compute-1.amazonaws.com
-  python3 upload.py 54.211.76.29 --dir ~/security_tools
-  python3 upload.py --ip 54.211.76.29 --key ~/mykey.pem
+  python3 upload.py ec2-203-0-113-10.compute-1.amazonaws.com
+  python3 upload.py 203.0.113.10 --dir ~/security_tools
+  python3 upload.py --ip 203.0.113.10 --key ~/mykey.pem
 
 {Colors.BOLD}Configuration:{Colors.RESET}
   Default key: {Config.DEFAULT_KEY}
