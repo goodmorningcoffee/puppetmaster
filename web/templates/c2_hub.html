@@ -1,0 +1,280 @@
+{% extends "base.html" %}
+
+{% block title %}PUPPETMASTER — Distributed C2 Controller{% endblock %}
+
+{% block head %}
+<style>
+  .c2-stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-top: 8px; }
+  .c2-stat { background: var(--cp-bg-black); border: 1px solid var(--cp-dark-gray); padding: 8px 12px; }
+  .c2-stat .label { display: block; font-size: 11px; color: var(--cp-dim); text-transform: uppercase; letter-spacing: 1px; }
+  .c2-stat .value { display: block; font-size: 22px; font-weight: bold; }
+
+  .c2-worker-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+  .c2-worker-table th { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--cp-neon-cyan); color: var(--cp-bright-cyan); text-transform: uppercase; font-size: 11px; letter-spacing: 1px; }
+  .c2-worker-table td { padding: 6px 8px; border-bottom: 1px dotted var(--cp-dark-gray); vertical-align: middle; }
+  .c2-worker-table tr:hover { background: var(--cp-bg-panel); }
+  .c2-worker-table .row-actions form { display: inline-block; margin: 0; }
+  .c2-worker-table .row-actions button { background: transparent; border: 1px solid var(--cp-dark-gray); color: var(--cp-dim); cursor: pointer; font-family: var(--cp-font); font-size: 11px; padding: 2px 6px; margin-left: 4px; }
+  .c2-worker-table .row-actions button:hover { border-color: var(--cp-bright-cyan); color: var(--cp-bright-cyan); }
+  .c2-worker-table .row-actions button.danger:hover { border-color: var(--cp-bright-red); color: var(--cp-bright-red); }
+  .c2-worker-table .status-ready { color: var(--cp-bright-green); }
+  .c2-worker-table .status-scanning { color: var(--cp-bright-yellow); }
+  .c2-worker-table .status-error { color: var(--cp-bright-red); }
+  .c2-worker-table .status-unknown { color: var(--cp-dim); }
+  .c2-worker-table .status-completed { color: var(--cp-bright-cyan); }
+
+  .c2-action-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 12px; }
+  .c2-action-card { background: var(--cp-bg-panel); border: 1px solid var(--cp-dark-gray); padding: 12px; }
+  .c2-action-card form { margin: 0; }
+  .c2-action-card button { width: 100%; background: transparent; border: 1px solid var(--cp-bright-cyan); color: var(--cp-bright-cyan); font-family: var(--cp-font); font-size: 13px; padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; justify-content: flex-start; }
+  .c2-action-card button:hover:not(:disabled) { box-shadow: var(--cp-glow-cyan); }
+  .c2-action-card button:disabled { opacity: 0.4; cursor: not-allowed; border-color: var(--cp-dark-gray); color: var(--cp-dim); }
+  .c2-action-card .desc { color: var(--cp-dim); font-size: 11px; margin-top: 6px; }
+
+  .c2-ssh-ready { color: var(--cp-bright-green); font-weight: bold; }
+  .c2-ssh-notready { color: var(--cp-bright-red); font-weight: bold; }
+  .c2-copycmd { background: var(--cp-bg-black); border: 1px solid var(--cp-neon-cyan); padding: 6px 10px; font-family: var(--cp-font); color: var(--cp-bright-cyan); display: inline-block; margin-top: 6px; cursor: text; user-select: all; }
+
+  .c2-empty { padding: 14px; text-align: center; color: var(--cp-dim); font-style: italic; }
+</style>
+{% endblock %}
+
+{% block body %}
+
+  <div class="cp-section"><span class="title cp-cyan">Distributed C2 Controller</span></div>
+
+  {% if message %}
+    <div class="cp-msg cp-msg-{{ message[0] }}">{{ message[1] }}</div>
+  {% endif %}
+
+  {% if snapshot_error %}
+    <div class="cp-msg cp-msg-error">{{ snapshot_error }}</div>
+  {% endif %}
+
+  {# ===== Active session banner ===== #}
+  {% if active_session %}
+    <div class="cp-panel cp-panel-pink">
+      <div class="cp-panel-title">⟨ ACTIVE SCAN SESSION ⟩</div>
+      <div class="cp-bright">
+        <span class="cp-bold">A distributed scan session is currently in progress.</span>
+      </div>
+      <div class="sf-status-row cp-dim">
+        Session ID: <span class="cp-mono cp-bright">{{ active_session.session_id }}</span>
+      </div>
+      <div class="sf-status-row cp-dim">
+        Started: {{ active_session.session_start }} — {{ active_session.total_domains }} domains
+      </div>
+      <div class="sf-status-row cp-yellow" style="margin-top: 8px;">
+        Worker management actions (validate / detect / setup) are disabled
+        until the session ends. Use Commit 2b's scan controls to stop it.
+      </div>
+    </div>
+  {% endif %}
+
+  {# ===== SSH status panel ===== #}
+  <div class="cp-panel">
+    <div class="cp-panel-title">⟨ SSH STATUS ⟩</div>
+    <div class="cp-bright">
+      Mode: <span class="cp-mono">{{ ssh_status.mode }}</span>
+      {% if ssh_status.ready %}
+        — <span class="c2-ssh-ready">READY</span>
+      {% else %}
+        — <span class="c2-ssh-notready">NOT READY</span>
+      {% endif %}
+    </div>
+    {% if not ssh_status.ready and ssh_status.error %}
+      <div class="cp-dim" style="margin-top: 6px; white-space: pre-wrap;">{{ ssh_status.error }}</div>
+      {% if ssh_status.remediation %}
+        <div class="cp-dim" style="margin-top: 6px;">Fix:</div>
+        <div class="c2-copycmd">{{ ssh_status.remediation }}</div>
+        <div class="cp-dim" style="margin-top: 6px; font-size: 11px;">
+          (triple-click to select, then copy into a terminal)
+        </div>
+      {% endif %}
+    {% endif %}
+  </div>
+
+  {# ===== Stats panel ===== #}
+  {% if stats %}
+    <div class="cp-panel">
+      <div class="cp-panel-title">⟨ FLEET STATS ⟩</div>
+      <div class="c2-stats-grid">
+        <div class="c2-stat">
+          <span class="label">Total</span>
+          <span class="value cp-bright">{{ stats.total_workers or 0 }}</span>
+        </div>
+        <div class="c2-stat">
+          <span class="label">Enabled</span>
+          <span class="value cp-cyan">{{ stats.enabled_workers or 0 }}</span>
+        </div>
+        <div class="c2-stat">
+          <span class="label">Ready</span>
+          <span class="value cp-green">{{ stats.workers_ready or 0 }}</span>
+        </div>
+        <div class="c2-stat">
+          <span class="label">Scanning</span>
+          <span class="value cp-yellow">{{ stats.workers_scanning or 0 }}</span>
+        </div>
+        <div class="c2-stat">
+          <span class="label">Errors</span>
+          <span class="value cp-red">{{ stats.workers_error or 0 }}</span>
+        </div>
+      </div>
+    </div>
+  {% endif %}
+
+  {# ===== Worker table ===== #}
+  <div class="cp-panel">
+    <div class="cp-panel-title">⟨ WORKERS ⟩</div>
+    {% if workers %}
+      <table class="c2-worker-table">
+        <tr>
+          <th>Nickname</th>
+          <th>Hostname</th>
+          <th>User</th>
+          <th>Enabled</th>
+          <th>Status</th>
+          <th>Resources</th>
+          <th>Last Seen</th>
+          <th>Actions</th>
+        </tr>
+        {% for w in workers %}
+          <tr>
+            <td class="cp-bright">{{ w.nickname or '(none)' }}</td>
+            <td class="cp-mono cp-dim" style="font-size: 11px;">{{ w.display_name }}</td>
+            <td class="cp-mono">{{ w.username }}</td>
+            <td>
+              {% if w.enabled %}
+                <span class="cp-green">✓</span>
+              {% else %}
+                <span class="cp-dim">—</span>
+              {% endif %}
+            </td>
+            <td class="status-{{ w.status }}">{{ w.status }}</td>
+            <td class="cp-dim">{{ w.resource_summary }}</td>
+            <td class="cp-dim" style="font-size: 11px;">{{ w.last_seen or 'never' }}</td>
+            <td class="row-actions">
+              <form method="POST" action="/menu/c2/workers/{{ w.hostname }}/toggle"
+                    onsubmit="return confirm('Toggle enabled state for {{ w.hostname }}?');">
+                <button type="submit">{{ 'disable' if w.enabled else 'enable' }}</button>
+              </form>
+              <form method="POST" action="/menu/c2/workers/{{ w.hostname }}/remove"
+                    onsubmit="return confirm('Permanently remove worker {{ w.hostname }}? This only removes it from the puppetmaster config — the EC2 instance itself is not affected.');">
+                <button type="submit" class="danger">remove</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </table>
+      <div class="cp-dim" style="font-size: 11px; margin-top: 6px;">
+        Status column is cached from the last validate run — click Validate below to refresh.
+      </div>
+    {% else %}
+      <div class="c2-empty">
+        No workers configured yet. Add one to get started.
+      </div>
+    {% endif %}
+  </div>
+
+  {# ===== Config summary ===== #}
+  {% if config_summary %}
+    <div class="cp-panel">
+      <div class="cp-panel-title">⟨ SCAN CONFIG ⟩</div>
+      <div class="cp-dim" style="font-size: 12px;">
+        Mode: <span class="cp-bright cp-mono">{{ config_summary.scan_mode }}</span> |
+        Parallel/worker: <span class="cp-bright">{{ config_summary.parallel_scans_per_worker }}</span> |
+        Hard timeout: <span class="cp-bright">{{ config_summary.hard_timeout_hours }}h</span> |
+        Activity timeout: <span class="cp-bright">{{ config_summary.activity_timeout_minutes }}m</span> |
+        Default intensity: <span class="cp-bright cp-mono">{{ config_summary.default_intensity }}</span>
+      </div>
+      <div class="cp-dim" style="font-size: 11px; margin-top: 4px;">
+        Remote work dir: <span class="cp-mono">{{ config_summary.remote_work_dir }}</span> |
+        SpiderFoot install dir: <span class="cp-mono">{{ config_summary.spiderfoot_install_dir }}</span>
+      </div>
+    </div>
+  {% endif %}
+
+  {# ===== Action panel ===== #}
+  {% set actions_disabled = (not ssh_status.ready) or active_session or (not workers) or (stats.enabled_workers or 0) == 0 %}
+
+  <div class="cp-panel cp-panel-pink">
+    <div class="cp-panel-title">⟨ FLEET ACTIONS ⟩</div>
+    {% if actions_disabled %}
+      <div class="cp-dim" style="margin-bottom: 8px;">
+        {% if active_session %}
+          Actions disabled while a scan session is active.
+        {% elif not ssh_status.ready %}
+          Actions disabled until SSH is ready. See SSH status panel above.
+        {% elif not workers or (stats.enabled_workers or 0) == 0 %}
+          Add and enable at least one worker to run fleet actions.
+        {% endif %}
+      </div>
+    {% endif %}
+    <div class="c2-action-grid">
+      <div class="c2-action-card">
+        <form method="POST" action="/menu/c2/validate">
+          <button type="submit" {% if actions_disabled %}disabled{% endif %}>
+            <span class="key">[V]</span><span class="icon">🔌</span>
+            <span class="label">Validate workers</span>
+          </button>
+        </form>
+        <div class="desc">Test SSH connectivity to every enabled worker in parallel.</div>
+      </div>
+      <div class="c2-action-card">
+        <form method="POST" action="/menu/c2/detect">
+          <button type="submit" {% if actions_disabled %}disabled{% endif %}>
+            <span class="key">[D]</span><span class="icon">📊</span>
+            <span class="label">Detect resources</span>
+          </button>
+        </form>
+        <div class="desc">Probe RAM / CPU / recommended parallelism on each worker.</div>
+      </div>
+      <div class="c2-action-card">
+        <form method="POST" action="/menu/c2/setup"
+              onsubmit="return confirm('Run apt update + install tmux + install SpiderFoot on all enabled workers? This is sequential and can take 10+ minutes per worker.');">
+          <button type="submit" {% if actions_disabled %}disabled{% endif %}>
+            <span class="key">[S]</span><span class="icon">📦</span>
+            <span class="label">Setup workers</span>
+          </button>
+        </form>
+        <div class="desc">Run apt update, install tmux, clone and install SpiderFoot. Sequential; slow.</div>
+      </div>
+    </div>
+  </div>
+
+  {# ===== Outbound nav ===== #}
+  <nav class="cp-menu" style="margin-top: 24px;">
+    <button class="cp-menu-item" data-route="/menu/c2/workers/add" data-key="a">
+      <span class="key">[A]</span><span class="icon">➕</span>
+      <span class="label">Add worker</span>
+    </button>
+    <button class="cp-menu-item" data-route="/menu/spiderfoot" data-key="s">
+      <span class="key">[S]</span><span class="icon">🕷️</span>
+      <span class="label">SpiderFoot Control Center</span>
+    </button>
+    <button class="cp-menu-item" data-route="/menu/scan-status" data-key="4">
+      <span class="key">[4]</span><span class="icon">📋</span>
+      <span class="label">Live scan status</span>
+    </button>
+    <button class="cp-menu-item" data-route="/" data-key="b">
+      <span class="key">[B]</span><span class="icon">←</span>
+      <span class="label">Back to main menu</span>
+    </button>
+  </nav>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const first = document.querySelector('.cp-menu-item');
+    if (first) first.focus();
+  });
+  document.querySelectorAll('.cp-menu-item[data-route]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const route = btn.dataset.route;
+      if (route) window.location.href = route;
+    });
+  });
+</script>
+{% endblock %}

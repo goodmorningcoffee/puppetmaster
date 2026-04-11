@@ -46,6 +46,7 @@ def create_app(config_class=WebConfig):
     from .routes.analysis import bp as analysis_bp
     from .routes.wildcard import bp as wildcard_bp
     from .routes.spiderfoot_control import bp as spiderfoot_control_bp
+    from .routes.c2 import bp as c2_bp
 
     app.register_blueprint(home_bp)
     app.register_blueprint(help_bp)
@@ -60,5 +61,6 @@ def create_app(config_class=WebConfig):
     app.register_blueprint(analysis_bp)
     app.register_blueprint(wildcard_bp)
     app.register_blueprint(spiderfoot_control_bp)
+    app.register_blueprint(c2_bp)
 
     return app

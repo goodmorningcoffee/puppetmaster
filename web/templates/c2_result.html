@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+
+{% block title %}PUPPETMASTER — C2 Action Complete{% endblock %}
+
+{% block head %}
+<style>
+  .result-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+  .result-table th { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--cp-neon-cyan); color: var(--cp-bright-cyan); text-transform: uppercase; font-size: 11px; letter-spacing: 1px; }
+  .result-table td { padding: 6px 8px; border-bottom: 1px dotted var(--cp-dark-gray); vertical-align: middle; }
+  .result-table tr:hover { background: var(--cp-bg-panel); }
+</style>
+{% endblock %}
+
+{% block body %}
+
+  {% set kind_titles = {
+    'c2_validate': 'Worker Validation Results',
+    'c2_detect': 'Resource Detection Results',
+    'c2_setup': 'Worker Setup Results',
+  } %}
+  {% set title = kind_titles.get(kind, 'C2 Action Results') %}
+
+  <div class="cp-section"><span class="title cp-cyan">{{ title }}</span></div>
+
+  <div class="cp-panel">
+    <div class="cp-panel-title">⟨ RUN {{ run_id }} ⟩</div>
+    {% if run.status == 'failed' %}
+      <div class="cp-msg cp-msg-error" style="margin: 0;">
+        Failed: {{ run.error }}
+      </div>
+    {% elif kind == 'c2_validate' %}
+      <div class="cp-bright">
+        <span class="cp-bold" style="font-size: 24px;">{{ result.total or 0 }}</span> validated —
+        <span class="cp-green cp-bold">{{ result.success_count or 0 }}</span> succeeded,
+        <span class="cp-red cp-bold">{{ result.fail_count or 0 }}</span> failed
+      </div>
+    {% elif kind == 'c2_detect' %}
+      <div class="cp-bright">
+        <span class="cp-bold" style="font-size: 24px;">{{ result.total or 0 }}</span> probed —
+        <span class="cp-green cp-bold">{{ result.detected_count or 0 }}</span> detected,
+        <span class="cp-dim">{{ (result.total or 0) - (result.detected_count or 0) }} unreachable</span>
+      </div>
+    {% elif kind == 'c2_setup' %}
+      <div class="cp-bright">
+        <span class="cp-bold" style="font-size: 24px;">{{ result.total or 0 }}</span> workers set up —
+        <span class="cp-green cp-bold">{{ result.success_count or 0 }}</span> succeeded,
+        <span class="cp-red cp-bold">{{ result.fail_count or 0 }}</span> failed
+      </div>
+    {% endif %}
+  </div>
+
+  {% if run.status != 'failed' and result.results %}
+
+    {% if kind == 'c2_validate' %}
+      <div class="cp-panel">
+        <div class="cp-panel-title">⟨ PER-WORKER RESULTS ⟩</div>
+        <table class="result-table">
+          <tr><th>Hostname</th><th>Success</th><th>Message</th></tr>
+          {% for hostname, r in result.results.items() %}
+            <tr>
+              <td class="cp-mono">{{ hostname }}</td>
+              <td>
+                {% if r.success %}
+                  <span class="cp-green cp-bold">✓ OK</span>
+                {% else %}
+                  <span class="cp-red cp-bold">✗ FAIL</span>
+                {% endif %}
+              </td>
+              <td class="cp-dim">{{ r.message }}</td>
+            </tr>
+          {% endfor %}
+        </table>
+      </div>
+    {% endif %}
+
+    {% if kind == 'c2_detect' %}
+      <div class="cp-panel">
+        <div class="cp-panel-title">⟨ PER-WORKER RESOURCES ⟩</div>
+        <table class="result-table">
+          <tr><th>Hostname</th><th>RAM</th><th>CPU Cores</th><th>Recommended Parallel</th></tr>
+          {% for hostname, r in result.results.items() %}
+            <tr>
+              <td class="cp-mono">{{ hostname }}</td>
+              <td>
+                {% if r.ram_gb is not none %}
+                  <span class="cp-bright">{{ r.ram_gb }} GB</span>
+                {% else %}
+                  <span class="cp-dim">—</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if r.cpu_cores is not none %}
+                  <span class="cp-bright">{{ r.cpu_cores }}</span>
+                {% else %}
+                  <span class="cp-dim">—</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if r.recommended_parallel is not none %}
+                  <span class="cp-cyan cp-bold">{{ r.recommended_parallel }}</span>
+                {% else %}
+                  <span class="cp-dim">—</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </table>
+      </div>
+    {% endif %}
+
+    {% if kind == 'c2_setup' %}
+      <div class="cp-panel">
+        <div class="cp-panel-title">⟨ PER-WORKER SETUP RESULTS ⟩</div>
+        <table class="result-table">
+          <tr>
+            <th>Hostname</th>
+            <th>Success</th>
+            <th>apt</th>
+            <th>tmux</th>
+            <th>SpiderFoot</th>
+            <th>Error</th>
+          </tr>
+          {% for hostname, r in result.results.items() %}
+            <tr>
+              <td class="cp-mono">{{ hostname }}</td>
+              <td>
+                {% if r.success %}
+                  <span class="cp-green cp-bold">✓</span>
+                {% else %}
+                  <span class="cp-red cp-bold">✗</span>
+                {% endif %}
+              </td>
+              <td>{% if r.apt_updated %}<span class="cp-green">✓</span>{% else %}<span class="cp-dim">—</span>{% endif %}</td>
+              <td>{% if r.tmux_installed %}<span class="cp-green">✓</span>{% else %}<span class="cp-dim">—</span>{% endif %}</td>
+              <td>{% if r.spiderfoot_installed %}<span class="cp-green">✓</span>{% else %}<span class="cp-dim">—</span>{% endif %}</td>
+              <td class="cp-dim" style="font-size: 11px;">{{ r.error_message or '' }}</td>
+            </tr>
+          {% endfor %}
+        </table>
+      </div>
+    {% endif %}
+
+  {% endif %}
+
+  <nav class="cp-menu" style="margin-top: 24px;">
+    <button class="cp-menu-item" data-route="/menu/c2" data-key="c">
+      <span class="key">[C]</span><span class="icon">⚙</span>
+      <span class="label">Back to C2 Hub</span>
+    </button>
+    <button class="cp-menu-item" data-route="/menu/spiderfoot" data-key="s">
+      <span class="key">[S]</span><span class="icon">🕷️</span>
+      <span class="label">SpiderFoot Control Center</span>
+    </button>
+    <button class="cp-menu-item" data-route="/" data-key="b">
+      <span class="key">[B]</span><span class="icon">←</span>
+      <span class="label">Main menu</span>
+    </button>
+  </nav>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const first = document.querySelector('.cp-menu-item');
+    if (first) first.focus();
+  });
+  document.querySelectorAll('.cp-menu-item[data-route]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const route = btn.dataset.route;
+      if (route) window.location.href = route;
+    });
+  });
+</script>
+{% endblock %}

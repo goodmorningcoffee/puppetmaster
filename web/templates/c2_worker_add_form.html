@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+
+{% block title %}PUPPETMASTER — Add Worker{% endblock %}
+
+{% block head %}
+<style>
+  .form-row { margin: 12px 0; }
+  .form-row label { display: block; color: var(--cp-bright-cyan); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+  .form-row input[type="text"] { width: 100%; box-sizing: border-box; background: var(--cp-bg-black); border: 1px solid var(--cp-dark-gray); color: var(--cp-bright-white); font-family: var(--cp-font); font-size: 14px; padding: 8px 10px; }
+  .form-row input[type="text"]:focus { outline: none; border-color: var(--cp-bright-cyan); box-shadow: var(--cp-glow-cyan); }
+  .form-hint { color: var(--cp-dim); font-size: 11px; margin-top: 4px; }
+  .submit-btn { background: transparent; border: 1px solid var(--cp-bright-green); color: var(--cp-bright-green); font-family: var(--cp-font); font-size: 14px; padding: 10px 20px; cursor: pointer; }
+  .submit-btn:hover { box-shadow: 0 0 6px var(--cp-bright-green); }
+</style>
+{% endblock %}
+
+{% block body %}
+
+  <div class="cp-section"><span class="title cp-cyan">Add C2 Worker</span></div>
+
+  {% if error %}
+    <div class="cp-msg cp-msg-error">{{ error }}</div>
+  {% endif %}
+
+  <div class="cp-panel">
+    <div class="cp-panel-title">⟨ NEW WORKER ⟩</div>
+    <div class="cp-dim" style="font-size: 12px;">
+      Register a new EC2 (or any SSH-reachable) worker for distributed SpiderFoot
+      scanning. SSH keys are loaded via <span class="cp-mono">ssh-add</span>, not
+      stored in puppetmaster. The worker is added disabled-safe: validate and
+      detect it from the hub before running a scan.
+    </div>
+
+    <form method="POST" action="/menu/c2/workers/add">
+      <div class="form-row">
+        <label for="hostname">Hostname or IP <span class="cp-red">*</span></label>
+        <input type="text" id="hostname" name="hostname" required
+               value="{{ hostname or '' }}"
+               placeholder="ec2-1-2-3-4.compute-1.amazonaws.com"
+               autocomplete="off" autofocus>
+        <div class="form-hint">
+          Only letters, digits, dots, and hyphens. Max 253 characters.
+        </div>
+      </div>
+
+      <div class="form-row">
+        <label for="username">SSH Username</label>
+        <input type="text" id="username" name="username"
+               value="{{ username or 'kali' }}"
+               placeholder="kali"
+               autocomplete="off">
+        <div class="form-hint">
+          Defaults to <span class="cp-mono">kali</span>. Must start with a letter
+          or underscore. Common values: <span class="cp-mono">ec2-user</span>,
+          <span class="cp-mono">ubuntu</span>, <span class="cp-mono">admin</span>.
+        </div>
+      </div>
+
+      <div class="form-row">
+        <label for="nickname">Nickname (optional)</label>
+        <input type="text" id="nickname" name="nickname"
+               value="{{ nickname or '' }}"
+               placeholder="worker-1"
+               autocomplete="off">
+        <div class="form-hint">
+          If left blank, auto-generated as <span class="cp-mono">worker-N</span>
+          based on position in the list.
+        </div>
+      </div>
+
+      <div class="form-row">
+        <button type="submit" class="submit-btn">➕ Add Worker</button>
+      </div>
+    </form>
+  </div>
+
+  <nav class="cp-menu" style="margin-top: 24px;">
+    <button class="cp-menu-item" data-route="/menu/c2" data-key="b">
+      <span class="key">[B]</span><span class="icon">←</span>
+      <span class="label">Back to C2 Hub</span>
+    </button>
+  </nav>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.querySelectorAll('.cp-menu-item[data-route]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const route = btn.dataset.route;
+      if (route) window.location.href = route;
+    });
+  });
+</script>
+{% endblock %}
