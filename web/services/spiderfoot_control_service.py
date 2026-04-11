@@ -354,27 +354,29 @@ def start_batch_scan_in_background(
             # again as duplicates.
             result = scanner.process_queue()  # blocks until done
 
-            # Snapshot final tracker state for the result page
+            # Snapshot final tracker state for the result page.
+            # Filter by domain set rather than slicing by count: get_completed
+            # / get_failed return jobs in dict insertion order, not completion
+            # order, so a count-based slice could mix in unrelated old jobs.
             jobs_snapshot: List[Dict[str, Any]] = []
             try:
-                completed_jobs = tracker.get_completed()
-                failed_jobs = tracker.get_failed()
-                # Limit to most recent N (the ones we just ran)
-                limit = max(len(pending_domains), 1)
-                for j in completed_jobs[-limit:]:
-                    jobs_snapshot.append({
-                        'domain': getattr(j, 'domain', ''),
-                        'status': 'completed',
-                        'csv_path': getattr(j, 'csv_path', None),
-                        'error': None,
-                    })
-                for j in failed_jobs[-limit:]:
-                    jobs_snapshot.append({
-                        'domain': getattr(j, 'domain', ''),
-                        'status': 'failed',
-                        'csv_path': None,
-                        'error': getattr(j, 'error', None),
-                    })
+                pending_set = set(pending_domains)
+                for j in tracker.get_completed():
+                    if getattr(j, 'domain', '') in pending_set:
+                        jobs_snapshot.append({
+                            'domain': getattr(j, 'domain', ''),
+                            'status': 'completed',
+                            'csv_path': getattr(j, 'csv_path', None),
+                            'error': None,
+                        })
+                for j in tracker.get_failed():
+                    if getattr(j, 'domain', '') in pending_set:
+                        jobs_snapshot.append({
+                            'domain': getattr(j, 'domain', ''),
+                            'status': 'failed',
+                            'csv_path': None,
+                            'error': getattr(j, 'error', None),
+                        })
             except Exception:
                 pass
 
