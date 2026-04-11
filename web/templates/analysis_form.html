@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+
+{% block title %}PUPPETMASTER — Run Analysis{% endblock %}
+
+{% block body %}
+
+  <div class="cp-section"><span class="title cp-cyan">Run Puppet Analysis</span></div>
+
+  {% if error %}
+    <div class="cp-msg cp-msg-error">{{ error }}</div>
+  {% endif %}
+
+  <div class="cp-panel">
+    <div class="cp-panel-title">⟨ ANALYSIS PIPELINE ⟩</div>
+    <div class="cp-dim">
+      Runs the full 6-stage detection pipeline against a SpiderFoot
+      exports directory: ingest → signal extraction → network analysis
+      → cluster detection → hub identification → report generation.
+      Output is a timestamped results directory with executive_summary.md
+      and the standard CSV reports.
+    </div>
+  </div>
+
+  <form method="POST" action="/menu/analysis/run">
+    <div class="cp-panel cp-panel-pink">
+      <div class="cp-panel-title">⟨ INPUT DIRECTORY ⟩</div>
+      <div class="cp-dim" style="margin-bottom: 8px;">
+        Path to a directory containing SpiderFoot CSV exports
+        (one CSV per scanned domain).
+      </div>
+      <input type="text" name="input_dir" required
+             placeholder="e.g. /home/you/spiderfoot_exports"
+             style="width: 100%;">
+    </div>
+
+    <div class="cp-panel">
+      <div class="cp-panel-title">⟨ OUTPUT DIRECTORY ⟩</div>
+      <div class="cp-dim" style="margin-bottom: 8px;">
+        Where to write the analysis results. Will be created if it doesn't exist.
+      </div>
+      <input type="text" name="output_dir" required
+             value="{{ default_output }}"
+             placeholder="e.g. ./results_20260411_120000"
+             style="width: 100%;">
+    </div>
+
+    <div class="cp-panel cp-panel-yellow">
+      <div class="cp-panel-title">⟨ OPTIONAL: KALI INFRA DIR ⟩</div>
+      <div class="cp-dim" style="margin-bottom: 8px;">
+        Path to a Kali infra analysis output directory. If provided, the
+        latest <span class="cp-mono">infrastructure_*.json</span> file will be
+        loaded and merged into the analysis to enrich the results with
+        Kali correlations.
+      </div>
+      <input type="text" name="kali_infra_dir"
+             placeholder="(optional)"
+             style="width: 100%;">
+    </div>
+
+    <div style="margin: 16px 0;">
+      <button type="submit" class="cp-menu-item" style="width: 100%; justify-content: center; background: var(--cp-bg-panel); border-color: var(--cp-bright-green); color: var(--cp-bright-green);">
+        <span class="key">[Enter]</span><span class="icon">🎭</span><span class="label">Start Analysis</span>
+      </button>
+    </div>
+  </form>
+
+  {% if previous_results %}
+    <div class="cp-section"><span class="title cp-yellow">Previous Result Directories</span></div>
+    <div class="cp-panel">
+      <div class="cp-dim" style="margin-bottom: 8px;">
+        For reference — paths you've previously written results to. Click to copy.
+      </div>
+      <ul style="font-family: var(--cp-font); font-size: 13px;">
+        {% for d in previous_results[:10] %}
+          <li><code style="cursor: copy;" class="copy-path">{{ d.path }}</code>
+              <span class="cp-dim">— {{ d.mtime }}</span></li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  <nav class="cp-menu" style="margin-top: 24px;">
+    <button class="cp-menu-item" data-route="/menu/results" data-key="r">
+      <span class="key">[R]</span><span class="icon">📊</span><span class="label">View previous results</span>
+    </button>
+    <button class="cp-menu-item" data-route="/" data-key="b">
+      <span class="key">[B]</span><span class="icon">←</span><span class="label">Back to main menu</span>
+    </button>
+  </nav>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const inp = document.querySelector('input[name="input_dir"]');
+    if (inp) inp.focus();
+  });
+
+  // Click-to-copy for previous result paths
+  document.querySelectorAll('.copy-path').forEach(el => {
+    el.addEventListener('click', (e) => {
+      const text = el.textContent;
+      navigator.clipboard?.writeText(text).then(() => {
+        const original = el.style.color;
+        el.style.color = 'var(--cp-bright-green)';
+        setTimeout(() => { el.style.color = original; }, 500);
+      });
+    });
+  });
+
+  document.querySelectorAll('.cp-menu-item[data-route]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const route = btn.dataset.route;
+      if (route) window.location.href = route;
+    });
+  });
+</script>
+{% endblock %}

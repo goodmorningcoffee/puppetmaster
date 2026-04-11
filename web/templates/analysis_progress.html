@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+
+{% block title %}PUPPETMASTER — Analysis Running...{% endblock %}
+
+{% block head %}
+<style>
+  .progress-log { background: var(--cp-bg-black); border: 1px solid var(--cp-neon-cyan); padding: 12px; max-height: 600px; overflow-y: auto; font-family: var(--cp-font); font-size: 13px; }
+  .progress-log .event { padding: 2px 0; border-bottom: 1px dotted var(--cp-dark-gray); }
+  .progress-log .event.info { color: var(--cp-bright-white); }
+  .progress-log .event.progress { color: var(--cp-bright-cyan); }
+  .progress-log .event.stage { color: var(--cp-neon-pink); font-weight: bold; }
+  .progress-log .event.success { color: var(--cp-bright-green); font-weight: bold; }
+  .progress-log .event.warning { color: var(--cp-bright-yellow); }
+  .progress-log .event.error { color: var(--cp-bright-red); font-weight: bold; }
+  .progress-log .ts { color: var(--cp-dim); margin-right: 8px; }
+  .status-banner { padding: 12px; margin: 8px 0; text-align: center; font-size: 16px; font-weight: bold; }
+  .status-banner.running { background: var(--cp-bg-panel); border: 1px solid var(--cp-bright-yellow); color: var(--cp-bright-yellow); }
+  .status-banner.completed { background: var(--cp-bg-panel); border: 1px solid var(--cp-bright-green); color: var(--cp-bright-green); }
+  .status-banner.failed { background: var(--cp-bg-panel); border: 1px solid var(--cp-bright-red); color: var(--cp-bright-red); }
+  .stages-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; margin: 12px 0; }
+  .stage-cell { background: var(--cp-bg-panel); border: 1px solid var(--cp-dark-gray); padding: 8px 4px; text-align: center; font-size: 11px; color: var(--cp-dim); }
+  .stage-cell.active { border-color: var(--cp-bright-yellow); color: var(--cp-bright-yellow); box-shadow: 0 0 4px var(--cp-bright-yellow); }
+  .stage-cell.done { border-color: var(--cp-bright-green); color: var(--cp-bright-green); }
+</style>
+{% endblock %}
+
+{% block body %}
+
+  <div class="cp-section"><span class="title cp-cyan">Analysis Pipeline Running</span></div>
+
+  <div class="cp-panel">
+    <div class="cp-panel-title">⟨ RUN {{ run_id }} ⟩</div>
+    <div id="status-banner" class="status-banner running">⏳ Running...</div>
+
+    <div class="stages-grid" id="stages-grid">
+      <div class="stage-cell" data-stage="ingest">1. Ingest</div>
+      <div class="stage-cell" data-stage="signals">2. Signals</div>
+      <div class="stage-cell" data-stage="network">3. Network</div>
+      <div class="stage-cell" data-stage="clusters">4. Clusters</div>
+      <div class="stage-cell" data-stage="hubs">5. Hubs</div>
+      <div class="stage-cell" data-stage="reports">6. Reports</div>
+    </div>
+  </div>
+
+  <div class="cp-panel cp-panel-pink">
+    <div class="cp-panel-title">⟨ EVENT LOG ⟩</div>
+    <div class="progress-log" id="event-log">
+      <div class="cp-dim">Connecting...</div>
+    </div>
+  </div>
+
+  <nav class="cp-menu" style="margin-top: 24px;">
+    <button class="cp-menu-item" data-route="/menu/analysis" data-key="n">
+      <span class="key">[N]</span><span class="icon">🎭</span><span class="label">New analysis</span>
+    </button>
+    <button class="cp-menu-item" data-route="/menu/results" data-key="r">
+      <span class="key">[R]</span><span class="icon">📊</span><span class="label">View results</span>
+    </button>
+    <button class="cp-menu-item" data-route="/" data-key="b">
+      <span class="key">[B]</span><span class="icon">←</span><span class="label">Back to main menu</span>
+    </button>
+  </nav>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const runId = {{ run_id | tojson }};
+  const log = document.getElementById('event-log');
+  const banner = document.getElementById('status-banner');
+  const stageOrder = ['ingest', 'signals', 'network', 'clusters', 'hubs', 'reports'];
+  let currentStageIdx = -1;
+
+  log.innerHTML = '';
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function appendEvent(level, message, ts) {
+    const time = ts ? new Date(ts * 1000).toLocaleTimeString() : '';
+    const div = document.createElement('div');
+    div.className = `event ${level}`;
+    div.innerHTML = `<span class="ts">${time}</span>${escapeHtml(message)}`;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function setBanner(status, text) {
+    banner.className = `status-banner ${status}`;
+    banner.textContent = text;
+  }
+
+  function updateStages(stageName) {
+    const idx = stageOrder.indexOf(stageName);
+    if (idx < 0) return;
+    // Mark all earlier stages as done, current as active
+    document.querySelectorAll('.stage-cell').forEach((cell, cellIdx) => {
+      cell.classList.remove('active', 'done');
+      const cellStage = cell.dataset.stage;
+      const cellOrderIdx = stageOrder.indexOf(cellStage);
+      if (cellOrderIdx < idx) cell.classList.add('done');
+      else if (cellOrderIdx === idx) cell.classList.add('active');
+    });
+    currentStageIdx = idx;
+  }
+
+  function markAllStagesDone() {
+    document.querySelectorAll('.stage-cell').forEach(cell => {
+      cell.classList.remove('active');
+      cell.classList.add('done');
+    });
+  }
+
+  let source;
+  try { source = new EventSource(`/events/run/${runId}`); }
+  catch (e) { appendEvent('error', `Failed to connect: ${e}`); }
+
+  if (source) {
+    source.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.event === 'hello') {
+          appendEvent('info', `Connected. Status: ${data.status}`, Date.now() / 1000);
+        }
+        else if (data.event === 'progress') {
+          appendEvent(data.level || 'info', data.msg || '', data.ts);
+          if (data.stage) updateStages(data.stage);
+        }
+        else if (data.event === 'final') {
+          if (data.status === 'completed') {
+            const result = data.result || {};
+            const basename = result.output_basename;
+            markAllStagesDone();
+            setBanner('completed', `✓ Completed`);
+            if (basename) {
+              appendEvent('success', `Redirecting to results in 1.5s...`, Date.now() / 1000);
+              setTimeout(() => {
+                window.location.href = `/menu/results/${encodeURIComponent(basename)}`;
+              }, 1500);
+            }
+          } else {
+            setBanner('failed', `✗ Failed: ${data.error || 'unknown error'}`);
+          }
+          source.close();
+        }
+        else if (data.event === 'error') {
+          appendEvent('error', data.error || 'unknown error');
+        }
+      } catch (e) {
+        appendEvent('error', `Parse error: ${e}`);
+      }
+    };
+
+    source.onerror = (err) => {
+      appendEvent('warning', '(SSE disconnected — auto-reconnecting)');
+    };
+  }
+
+  document.querySelectorAll('.cp-menu-item[data-route]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const route = btn.dataset.route;
+      if (route) window.location.href = route;
+    });
+  });
+</script>
+{% endblock %}

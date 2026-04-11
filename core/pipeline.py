@@ -73,6 +73,7 @@ def run_full_pipeline(
     output_dir: str,
     show_progress: bool = True,
     kali_infra_dir: Optional[str] = None,
+    progress_callback=None,
 ) -> bool:
     """
     Run the complete sock puppet detection pipeline.
@@ -86,10 +87,22 @@ def run_full_pipeline(
                         file in that directory will be loaded and its
                         correlations merged into the main signal pile so that
                         Kali findings show up in the executive summary.
+        progress_callback: Optional Callable[[str, str], None] called at each
+                        stage transition as `progress_callback(stage_name, message)`.
+                        Used by the web GUI to stream progress events. The TUI
+                        passes None and behaves identically to before.
 
     Returns:
         bool: True if successful, False otherwise
     """
+    def _emit(stage: str, message: str):
+        """Helper to call progress_callback if provided, no-op otherwise."""
+        if progress_callback is not None:
+            try:
+                progress_callback(stage, message)
+            except Exception:
+                pass  # never let a callback failure crash the pipeline
+
     try:
         start_time = time.time()
         input_path = Path(input_dir)
@@ -107,9 +120,12 @@ def run_full_pipeline(
             print("  PUPPETMASTER ANALYSIS PIPELINE")
             print("=" * 70)
 
+        _emit("start", "Pipeline starting")
+
         # =====================================================================
         # STAGE 1: Data Ingestion
         # =====================================================================
+        _emit("ingest", "Loading SpiderFoot CSV exports")
         if HAS_FUN_DISPLAY:
             print_stage_header(1, total_stages, "Loading SpiderFoot Data")
         else:
@@ -137,6 +153,8 @@ def run_full_pipeline(
             'total_rows': data['total_rows'],
             'modules': len(data['rows_by_module'])
         }
+
+        _emit("signals", f"Extracting signals from {data_summary['total_rows']:,} rows across {data_summary['domains']} domains")
 
         # =====================================================================
         # STAGE 2: Signal Extraction
@@ -183,6 +201,8 @@ def run_full_pipeline(
                 # Never let Kali merge failure crash the main pipeline
                 print(f"  ⚠ Kali merge failed: {e}")
 
+        _emit("network", f"Building connection network from {len(signals)} signals")
+
         # =====================================================================
         # STAGE 3: Network Analysis
         # =====================================================================
@@ -207,6 +227,8 @@ def run_full_pipeline(
             if spinner:
                 spinner.stop("Error building network")
             raise
+
+        _emit("clusters", "Detecting domain clusters via Louvain community detection")
 
         # =====================================================================
         # STAGE 4: Cluster Detection
@@ -307,6 +329,8 @@ def run_full_pipeline(
                 if HAS_FUN_DISPLAY:
                     print(f"  {C.DIM}[i] Wildcard check skipped: {e}{C.RESET}")
 
+        _emit("hubs", f"Identifying hub domains from {len(clusters)} clusters")
+
         # =====================================================================
         # STAGE 5: Hub Identification
         # =====================================================================
@@ -329,6 +353,8 @@ def run_full_pipeline(
             if spinner:
                 spinner.stop("Error identifying hubs")
             raise
+
+        _emit("reports", f"Generating reports to {output_path}")
 
         # =====================================================================
         # STAGE 6: Report Generation
@@ -423,6 +449,7 @@ def run_full_pipeline(
    Start with: executive_summary.md
 """)
 
+        _emit("complete", f"Pipeline complete: {confirmed} confirmed, {likely} likely, {len(clusters)} clusters")
         return True
 
     except Exception as e:
@@ -432,6 +459,11 @@ def run_full_pipeline(
             print(f"\n❌ Pipeline failed: {e}")
         import traceback
         traceback.print_exc()
+        if progress_callback is not None:
+            try:
+                progress_callback("error", f"Pipeline failed: {e}")
+            except Exception:
+                pass
         return False
 
 
