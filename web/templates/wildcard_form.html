@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block title %}PUPPETMASTER — Wildcard DNS Analyzer{% endblock %}
+
+{% block body %}
+
+  <div class="cp-section"><span class="title cp-cyan">Signal//Noise Wildcard DNS Analyzer</span></div>
+
+  {% if error %}
+    <div class="cp-msg cp-msg-error">{{ error }}</div>
+  {% endif %}
+
+  <div class="cp-panel">
+    <div class="cp-panel-title">⟨ WHY THIS EXISTS ⟩</div>
+    <div class="cp-dim">
+      Some domains use catch-all (wildcard) DNS records: every random
+      subdomain resolves to the same IP. SpiderFoot's enumerator can
+      return thousands of these "subdomains" which then create fake
+      "shared infrastructure" signals in the main analysis. This tool
+      detects wildcard zones so you can filter them out.
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px;">
+
+    {# ===== Quick check ===== #}
+    <div class="cp-panel cp-panel-pink">
+      <div class="cp-panel-title">⟨ QUICK CHECK (sync, fast) ⟩</div>
+      <div class="cp-dim" style="margin-bottom: 8px;">
+        Test one or more domains for wildcard DNS in a few seconds.
+        DNS resolution only — no HTTP fetches, no cert lookups.
+      </div>
+      <form method="POST" action="/menu/wildcard/quick">
+        <textarea name="domains" rows="6" required
+                  style="width: 100%;"
+                  placeholder="example.com&#10;another.io&#10;..."></textarea>
+        <button type="submit" class="cp-menu-item" style="width: 100%; justify-content: center; margin-top: 8px;">
+          <span class="key">[Q]</span><span class="icon">⚡</span><span class="label">Quick Check</span>
+        </button>
+      </form>
+    </div>
+
+    {# ===== Full analysis ===== #}
+    <div class="cp-panel cp-panel-yellow">
+      <div class="cp-panel-title">⟨ FULL ANALYSIS (async, slow) ⟩</div>
+      <div class="cp-dim" style="margin-bottom: 8px;">
+        Multi-phase deep analysis on a single domain: DNS baseline,
+        certificate transparency, HTTP fingerprinting, infrastructure
+        correlation. Streams progress via SSE.
+      </div>
+      <form method="POST" action="/menu/wildcard/full">
+        <input type="text" name="domain" required
+               placeholder="example.com"
+               style="width: 100%;">
+        <div class="cp-dim" style="margin-top: 8px;">SpiderFoot dir (optional, for correlation):</div>
+        <input type="text" name="spiderfoot_dir"
+               placeholder="(optional path)"
+               style="width: 100%;">
+        <button type="submit" class="cp-menu-item" style="width: 100%; justify-content: center; margin-top: 8px;">
+          <span class="key">[F]</span><span class="icon">🔬</span><span class="label">Full Analysis</span>
+        </button>
+      </form>
+    </div>
+
+  </div>
+
+  <nav class="cp-menu" style="margin-top: 24px;">
+    <button class="cp-menu-item" data-route="/" data-key="b">
+      <span class="key">[B]</span><span class="icon">←</span><span class="label">Back to main menu</span>
+    </button>
+  </nav>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const ta = document.querySelector('textarea[name="domains"]');
+    if (ta) ta.focus();
+  });
+  document.querySelectorAll('.cp-menu-item[data-route]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const route = btn.dataset.route;
+      if (route) window.location.href = route;
+    });
+  });
+</script>
+{% endblock %}

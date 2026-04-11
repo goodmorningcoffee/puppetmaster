@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block title %}PUPPETMASTER — Wildcard Analysis Running...{% endblock %}
+
+{% block head %}
+<style>
+  .progress-log { background: var(--cp-bg-black); border: 1px solid var(--cp-neon-cyan); padding: 12px; max-height: 600px; overflow-y: auto; font-family: var(--cp-font); font-size: 13px; }
+  .progress-log .event { padding: 2px 0; border-bottom: 1px dotted var(--cp-dark-gray); }
+  .progress-log .event.info { color: var(--cp-bright-white); }
+  .progress-log .event.progress { color: var(--cp-bright-cyan); }
+  .progress-log .event.stage { color: var(--cp-neon-pink); font-weight: bold; }
+  .progress-log .event.success { color: var(--cp-bright-green); font-weight: bold; }
+  .progress-log .event.warning { color: var(--cp-bright-yellow); }
+  .progress-log .event.error { color: var(--cp-bright-red); font-weight: bold; }
+  .progress-log .ts { color: var(--cp-dim); margin-right: 8px; }
+  .status-banner { padding: 12px; margin: 8px 0; text-align: center; font-size: 16px; font-weight: bold; }
+  .status-banner.running { background: var(--cp-bg-panel); border: 1px solid var(--cp-bright-yellow); color: var(--cp-bright-yellow); }
+  .status-banner.completed { background: var(--cp-bg-panel); border: 1px solid var(--cp-bright-green); color: var(--cp-bright-green); }
+  .status-banner.failed { background: var(--cp-bg-panel); border: 1px solid var(--cp-bright-red); color: var(--cp-bright-red); }
+  .result-block { background: var(--cp-bg-panel); border: 1px solid var(--cp-bright-green); padding: 12px; margin-top: 12px; display: none; }
+  .result-block.visible { display: block; }
+  .result-block pre { font-size: 11px; max-height: 400px; overflow-y: auto; }
+</style>
+{% endblock %}
+
+{% block body %}
+
+  <div class="cp-section"><span class="title cp-cyan">Wildcard Full Analysis</span></div>
+
+  <div class="cp-panel">
+    <div class="cp-panel-title">⟨ RUN {{ run_id }} ⟩</div>
+    <div id="status-banner" class="status-banner running">⏳ Running...</div>
+  </div>
+
+  <div class="cp-panel cp-panel-pink">
+    <div class="cp-panel-title">⟨ EVENT LOG ⟩</div>
+    <div class="progress-log" id="event-log">
+      <div class="cp-dim">Connecting...</div>
+    </div>
+  </div>
+
+  <div class="result-block" id="result-block">
+    <div class="cp-bold cp-green">⟨ ANALYSIS RESULT ⟩</div>
+    <pre id="result-json"></pre>
+  </div>
+
+  <nav class="cp-menu" style="margin-top: 24px;">
+    <button class="cp-menu-item" data-route="/menu/wildcard" data-key="n">
+      <span class="key">[N]</span><span class="icon">🔬</span><span class="label">New analysis</span>
+    </button>
+    <button class="cp-menu-item" data-route="/" data-key="b">
+      <span class="key">[B]</span><span class="icon">←</span><span class="label">Back to main menu</span>
+    </button>
+  </nav>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const runId = {{ run_id | tojson }};
+  const log = document.getElementById('event-log');
+  const banner = document.getElementById('status-banner');
+  const resultBlock = document.getElementById('result-block');
+  const resultJson = document.getElementById('result-json');
+
+  log.innerHTML = '';
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function appendEvent(level, message, ts) {
+    const time = ts ? new Date(ts * 1000).toLocaleTimeString() : '';
+    const div = document.createElement('div');
+    div.className = `event ${level}`;
+    div.innerHTML = `<span class="ts">${time}</span>${escapeHtml(message)}`;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function setBanner(status, text) {
+    banner.className = `status-banner ${status}`;
+    banner.textContent = text;
+  }
+
+  let source;
+  try { source = new EventSource(`/events/run/${runId}`); }
+  catch (e) { appendEvent('error', `Failed to connect: ${e}`); }
+
+  if (source) {
+    source.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.event === 'hello') {
+          appendEvent('info', `Connected. Status: ${data.status}`, Date.now() / 1000);
+        }
+        else if (data.event === 'progress') {
+          appendEvent(data.level || 'info', data.msg || '', data.ts);
+        }
+        else if (data.event === 'final') {
+          if (data.status === 'completed') {
+            const result = data.result || {};
+            setBanner('completed', `✓ Analysis complete`);
+            resultBlock.classList.add('visible');
+            resultJson.textContent = JSON.stringify(result.analysis || {}, null, 2);
+          } else {
+            setBanner('failed', `✗ Failed: ${data.error || 'unknown error'}`);
+          }
+          source.close();
+        }
+        else if (data.event === 'error') {
+          appendEvent('error', data.error || 'unknown error');
+        }
+      } catch (e) {
+        appendEvent('error', `Parse error: ${e}`);
+      }
+    };
+    source.onerror = (err) => {
+      appendEvent('warning', '(SSE disconnected — auto-reconnecting)');
+    };
+  }
+
+  document.querySelectorAll('.cp-menu-item[data-route]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const route = btn.dataset.route;
+      if (route) window.location.href = route;
+    });
+  });
+</script>
+{% endblock %}
