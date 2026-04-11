@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block title %}PUPPETMASTER — Scrape Domains{% endblock %}
+
+{% block body %}
+
+  <div class="cp-section"><span class="title cp-cyan">Scrape Domains</span></div>
+
+  {% if error %}
+    <div class="cp-msg cp-msg-error">{{ error }}</div>
+  {% endif %}
+
+  <div class="cp-panel">
+    <div class="cp-panel-title">⟨ SEARCH ENGINE SCRAPER ⟩</div>
+    <div class="cp-dim">
+      Search Google and/or DuckDuckGo for domains matching one or more
+      keywords. No API keys required. Uses safe-mode delays to avoid
+      rate limiting.
+    </div>
+  </div>
+
+  <form method="POST" action="/menu/scrape/run">
+    <div class="cp-panel cp-panel-pink">
+      <div class="cp-panel-title">⟨ KEYWORDS ⟩</div>
+      <div class="cp-dim" style="margin-bottom: 8px;">
+        One per line, or comma-separated.
+      </div>
+      <textarea name="keywords" rows="6" required
+                style="width: 100%; resize: vertical;"
+                placeholder="example keyword 1&#10;example keyword 2"></textarea>
+    </div>
+
+    <div class="cp-panel">
+      <div class="cp-panel-title">⟨ OPTIONS ⟩</div>
+      <table class="cp-table">
+        <tr>
+          <td><label for="max_results"><span class="cp-bright">Max results per keyword:</span></label></td>
+          <td><input type="number" name="max_results" id="max_results" value="50" min="1" max="200" style="width: 80px;"></td>
+          <td class="cp-dim">per search engine (1-200)</td>
+        </tr>
+        <tr>
+          <td><label><input type="checkbox" name="use_google" checked> <span class="cp-bright">Use Google</span></label></td>
+          <td colspan="2" class="cp-dim">via googlesearch-python</td>
+        </tr>
+        <tr>
+          <td><label><input type="checkbox" name="use_duckduckgo" checked> <span class="cp-bright">Use DuckDuckGo</span></label></td>
+          <td colspan="2" class="cp-dim">via ddgs library</td>
+        </tr>
+      </table>
+    </div>
+
+    <div style="margin: 16px 0;">
+      <button type="submit" class="cp-menu-item" style="width: 100%; justify-content: center; background: var(--cp-bg-panel); border-color: var(--cp-bright-cyan);">
+        <span class="key">[Enter]</span><span class="icon">🔍</span><span class="label">Start Scrape</span>
+      </button>
+    </div>
+  </form>
+
+  <nav class="cp-menu" style="margin-top: 24px;">
+    <button class="cp-menu-item" data-route="/menu/queue" data-key="q">
+      <span class="key">[Q]</span><span class="icon">📋</span><span class="label">Domain queue</span>
+    </button>
+    <button class="cp-menu-item" data-route="/" data-key="b">
+      <span class="key">[B]</span><span class="icon">←</span><span class="label">Back to main menu</span>
+    </button>
+  </nav>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const ta = document.querySelector('textarea[name="keywords"]');
+    if (ta) ta.focus();
+  });
+  document.querySelectorAll('.cp-menu-item[data-route]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const route = btn.dataset.route;
+      if (route) window.location.href = route;
+    });
+  });
+</script>
+{% endblock %}

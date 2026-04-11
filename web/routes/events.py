@@ -2,8 +2,9 @@
 events.py - Server-Sent Events (SSE) routes.
 
 Streams real-time updates to the browser. Provides:
-  - /events/vitals     — system vitals (CPU/mem/disk) + scan status
-  - /events/scan-jobs  — scan job queue snapshots from JobTracker
+  - /events/vitals       — system vitals (CPU/mem/disk) + scan status
+  - /events/scan-jobs    — scan job queue snapshots from JobTracker
+  - /events/run/<run_id> — per-run progress events from web/services/run_state
 
 Each SSE endpoint is a Flask route that returns a streaming Response with
 mimetype text/event-stream. The browser opens an EventSource connection
@@ -15,6 +16,7 @@ import time
 
 from flask import Blueprint, Response, current_app
 
+from ..services import run_state
 from ..services.vitals import collect_vitals
 from ..services.queue_service import get_queue_snapshot
 
@@ -80,6 +82,69 @@ def vitals_stream():
 
     response = Response(generate(), mimetype="text/event-stream")
     # Disable proxy buffering — important for SSE through nginx etc.
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["X-Accel-Buffering"] = "no"
+    return response
+
+
+@bp.route('/events/run/<run_id>')
+def run_events_stream(run_id: str):
+    """
+    Server-Sent Events stream of events for a single long-running operation.
+
+    Polls run_state.get_events_since() every 0.5s and yields any new events.
+    Closes the stream when the run reaches a terminal state (completed or
+    failed) plus a brief grace period to ensure the final event reaches the
+    browser.
+
+    Used by all long-running operation screens (scrape in Commit 2, analysis
+    in Commit 3, wildcard full mode in Commit 4).
+    """
+    poll_interval = 0.5  # seconds
+
+    def generate():
+        last_seq = 0
+        terminal_count = 0
+
+        # Send a hello event so the client knows the connection is open
+        run = run_state.get_run(run_id)
+        if run is None:
+            yield f"data: {json.dumps({'event': 'error', 'error': 'unknown run_id', 'run_id': run_id})}\n\n"
+            return
+        yield f"data: {json.dumps({'event': 'hello', 'kind': run['kind'], 'status': run['status']})}\n\n"
+
+        while True:
+            try:
+                events = run_state.get_events_since(run_id, last_seq)
+                for ev in events:
+                    last_seq = ev['seq']
+                    payload = {'event': 'progress', **ev}
+                    yield f"data: {json.dumps(payload)}\n\n"
+
+                # Check if the run is in a terminal state
+                if run_state.is_terminal(run_id):
+                    terminal_count += 1
+                    if terminal_count == 1:
+                        snapshot = run_state.get_run(run_id)
+                        if snapshot:
+                            final_payload = {
+                                'event': 'final',
+                                'status': snapshot['status'],
+                                'result': snapshot.get('result'),
+                                'error': snapshot.get('error'),
+                            }
+                            yield f"data: {json.dumps(final_payload)}\n\n"
+                    if terminal_count >= 2:
+                        break
+
+                time.sleep(poll_interval)
+            except GeneratorExit:
+                break
+            except Exception as e:
+                yield f"data: {json.dumps({'event': 'error', 'error': str(e)})}\n\n"
+                break
+
+    response = Response(generate(), mimetype="text/event-stream")
     response.headers["Cache-Control"] = "no-cache"
     response.headers["X-Accel-Buffering"] = "no"
     return response

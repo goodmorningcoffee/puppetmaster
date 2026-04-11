@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+
+{% block title %}PUPPETMASTER — Scrape Results{% endblock %}
+
+{% block head %}
+<style>
+  .domain-list { max-height: 500px; overflow-y: auto; padding-right: 8px; background: var(--cp-bg-black); border: 1px solid var(--cp-dark-gray); padding: 12px; }
+  .domain-row { display: flex; align-items: center; padding: 4px 0; border-bottom: 1px dotted var(--cp-dark-gray); }
+  .domain-row label { display: flex; align-items: center; flex: 1; cursor: pointer; }
+  .domain-row .name { font-family: var(--cp-font); font-size: 13px; margin-left: 8px; }
+  .domain-row:hover { background: var(--cp-bg-hover); }
+  .actions-bar { display: flex; gap: 8px; align-items: center; padding: 12px; background: var(--cp-bg-panel); border: 1px solid var(--cp-neon-cyan); margin-bottom: 12px; flex-wrap: wrap; }
+  .actions-bar input[name="save_as"] { flex: 1; min-width: 200px; }
+</style>
+{% endblock %}
+
+{% block body %}
+
+  <div class="cp-section"><span class="title cp-cyan">Scrape Results</span></div>
+
+  {% if message %}
+    <div class="cp-msg cp-msg-{{ message[0] }}">{{ message[1] }}</div>
+  {% endif %}
+
+  <div class="cp-panel">
+    <div class="cp-panel-title">⟨ RUN {{ run_id }} ⟩</div>
+    <div class="cp-bright">
+      <span class="cp-bold" style="font-size: 24px;">{{ domain_count }}</span>
+      domains found
+      {% if keywords %}
+        from {{ keywords|length }} keyword(s):
+        <span class="cp-mono cp-dim">{{ keywords|join(', ') }}</span>
+      {% endif %}
+    </div>
+    {% if errors %}
+      <div class="cp-msg cp-msg-warning" style="margin-top: 8px;">
+        {{ errors|length }} error(s) during scraping:
+        <ul>
+          {% for e in errors %}<li>{{ e }}</li>{% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+  </div>
+
+  {% if domains %}
+    <form method="POST" action="/menu/scrape/commit/{{ run_id }}" id="commit-form">
+      <div class="actions-bar">
+        <button type="button" id="select-all-btn" class="cp-menu-item" style="padding: 4px 12px;">
+          <span class="cp-cyan">Select all</span>
+        </button>
+        <button type="button" id="select-none-btn" class="cp-menu-item" style="padding: 4px 12px;">
+          <span class="cp-dim">Select none</span>
+        </button>
+        <span class="cp-dim">|</span>
+        <span class="cp-bright">Save as:</span>
+        <input type="text" name="save_as" placeholder="my_list.txt (optional)">
+        <button type="submit" class="cp-menu-item" style="padding: 4px 12px; background: var(--cp-bg-panel); border-color: var(--cp-bright-green); color: var(--cp-bright-green);">
+          <span>⮕ Add to queue (<span id="selected-count">{{ domains|length }}</span>)</span>
+        </button>
+      </div>
+
+      <div class="cp-panel">
+        <div class="cp-panel-title">⟨ DISCOVERED DOMAINS ⟩</div>
+        <div class="domain-list">
+          {% for d in domains %}
+            <div class="domain-row">
+              <label>
+                <input type="checkbox" name="selected" value="{{ d }}" class="domain-cb" checked>
+                <span class="name">{{ d }}</span>
+              </label>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </form>
+  {% else %}
+    <div class="cp-msg cp-msg-info">
+      No domains found. Try different keywords or enable both search engines.
+    </div>
+  {% endif %}
+
+  <nav class="cp-menu" style="margin-top: 24px;">
+    <button class="cp-menu-item" data-route="/menu/scrape" data-key="n">
+      <span class="key">[N]</span><span class="icon">🔍</span><span class="label">New scrape</span>
+    </button>
+    <button class="cp-menu-item" data-route="/menu/queue" data-key="q">
+      <span class="key">[Q]</span><span class="icon">📋</span><span class="label">View queue</span>
+    </button>
+    <button class="cp-menu-item" data-route="/" data-key="b">
+      <span class="key">[B]</span><span class="icon">←</span><span class="label">Back to main menu</span>
+    </button>
+  </nav>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const checkboxes = document.querySelectorAll('.domain-cb');
+  const countLabel = document.getElementById('selected-count');
+
+  function updateCount() {
+    const checked = document.querySelectorAll('.domain-cb:checked').length;
+    if (countLabel) countLabel.textContent = checked;
+  }
+
+  document.getElementById('select-all-btn')?.addEventListener('click', () => {
+    checkboxes.forEach(cb => cb.checked = true);
+    updateCount();
+  });
+  document.getElementById('select-none-btn')?.addEventListener('click', () => {
+    checkboxes.forEach(cb => cb.checked = false);
+    updateCount();
+  });
+  checkboxes.forEach(cb => cb.addEventListener('change', updateCount));
+
+  document.querySelectorAll('.cp-menu-item[data-route]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const route = btn.dataset.route;
+      if (route) window.location.href = route;
+    });
+  });
+</script>
+{% endblock %}
