@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+
+{% block title %}PUPPETMASTER — Results: {{ dirname }}{% endblock %}
+
+{% block head %}
+<style>
+  /* Markdown rendering — make the executive summary look right inside cyberpunk chrome */
+  .cp-md-h1 { color: var(--cp-neon-cyan); text-shadow: var(--cp-glow-cyan); border-bottom: 1px solid var(--cp-neon-cyan); padding-bottom: 8px; margin-top: 24px; }
+  .cp-md-h2 { color: var(--cp-neon-pink); text-shadow: var(--cp-glow-pink); margin-top: 20px; }
+  .cp-md-h3 { color: var(--cp-bright-yellow); margin-top: 16px; }
+  .cp-md-p { color: var(--cp-bright-white); margin: 8px 0; }
+  .cp-md-list { padding-left: 24px; }
+  .cp-md-list li { margin: 4px 0; }
+  .cp-md-table { margin: 12px 0; }
+  .cp-md-table th { background: var(--cp-bg-black); }
+  .cp-md-table td code { background: var(--cp-bg-black); padding: 2px 4px; color: var(--cp-neon-cyan); }
+  .cp-hr { border: none; border-top: 1px dashed var(--cp-dark-gray); margin: 16px 0; }
+
+  /* CSV tabs */
+  .csv-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 16px; border-bottom: 1px solid var(--cp-neon-cyan); padding-bottom: 0; }
+  .csv-tab { padding: 8px 14px; cursor: pointer; background: var(--cp-bg-panel); border: 1px solid var(--cp-dark-gray); border-bottom: none; color: var(--cp-bright-white); font-family: var(--cp-font); font-size: 13px; }
+  .csv-tab:hover { background: var(--cp-bg-hover); color: var(--cp-neon-cyan); }
+  .csv-tab.active { background: var(--cp-bg-black); color: var(--cp-neon-cyan); border-color: var(--cp-neon-cyan); border-bottom: 1px solid var(--cp-bg-black); position: relative; top: 1px; }
+  .csv-loading { color: var(--cp-dim); padding: 16px; }
+  .csv-content { background: var(--cp-bg-black); border: 1px solid var(--cp-neon-cyan); border-top: none; padding: 12px; max-height: 600px; overflow: auto; }
+  .csv-content table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .csv-content th { background: var(--cp-bg-panel); color: var(--cp-neon-cyan); padding: 6px 8px; text-align: left; position: sticky; top: 0; cursor: pointer; user-select: none; }
+  .csv-content th:hover { color: var(--cp-bright-yellow); }
+  .csv-content td { padding: 4px 8px; border-bottom: 1px dotted var(--cp-dark-gray); word-break: break-all; }
+  .csv-content tr:hover td { background: var(--cp-bg-hover); }
+  .csv-info { color: var(--cp-dim); font-size: 12px; padding: 8px; }
+</style>
+{% endblock %}
+
+{% block body %}
+
+  <div class="cp-section"><span class="title cp-cyan">Result: {{ dirname }}</span></div>
+
+  <div class="cp-panel">
+    <div class="cp-panel-title">⟨ DIRECTORY ⟩</div>
+    <div class="cp-mono cp-dim">{{ result_path }}</div>
+  </div>
+
+  {# ===== Executive summary ===== #}
+  {% if has_summary %}
+    <div class="cp-panel cp-panel-pink">
+      <div class="cp-panel-title">⟨ EXECUTIVE SUMMARY ⟩</div>
+      <div class="markdown-content">
+        {{ summary_html | safe }}
+      </div>
+    </div>
+  {% else %}
+    <div class="cp-msg cp-msg-warning">
+      No executive_summary.md found in this directory.
+    </div>
+  {% endif %}
+
+  {# ===== CSV tabs ===== #}
+  {% if available_csvs %}
+    <div class="cp-section"><span class="title cp-yellow">CSV Reports</span></div>
+    <div class="csv-tabs" id="csv-tabs">
+      {% for csv_name in available_csvs %}
+        <button class="csv-tab{% if loop.first %} active{% endif %}"
+                data-csv="{{ csv_name }}">{{ csv_name }}</button>
+      {% endfor %}
+    </div>
+    <div class="csv-content" id="csv-content">
+      <div class="csv-loading">Loading...</div>
+    </div>
+  {% endif %}
+
+  <nav class="cp-menu" style="margin-top: 24px;">
+    <button class="cp-menu-item" data-route="/menu/results" data-key="b">
+      <span class="key">[B]</span><span class="icon">←</span><span class="label">Back to results list</span>
+    </button>
+    <button class="cp-menu-item" data-route="/" data-key="m">
+      <span class="key">[M]</span><span class="icon">🏠</span><span class="label">Main menu</span>
+    </button>
+  </nav>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Menu navigation
+  document.querySelectorAll('.cp-menu-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const route = btn.dataset.route;
+      if (route) window.location.href = route;
+    });
+  });
+
+  // CSV tab handling
+  const dirname = {{ dirname | tojson }};
+  const tabs = document.querySelectorAll('.csv-tab');
+  const content = document.getElementById('csv-content');
+
+  let sortState = { col: null, asc: true };
+  let currentData = null;
+
+  function renderTable(data) {
+    sortState = { col: null, asc: true };
+    currentData = data;
+    drawTable();
+  }
+
+  function drawTable() {
+    const data = currentData;
+    if (!data) return;
+
+    const rows = [...data.rows];
+    if (sortState.col !== null) {
+      rows.sort((a, b) => {
+        const av = a[sortState.col] || '';
+        const bv = b[sortState.col] || '';
+        // Try numeric sort first
+        const an = parseFloat(av), bn = parseFloat(bv);
+        if (!isNaN(an) && !isNaN(bn)) {
+          return sortState.asc ? an - bn : bn - an;
+        }
+        return sortState.asc ? av.localeCompare(bv) : bv.localeCompare(av);
+      });
+    }
+
+    let html = `<div class="csv-info">${data.total_rows} rows`;
+    if (data.truncated) {
+      html += ` <span style="color: var(--cp-yellow);">(showing first ${data.rows.length})</span>`;
+    }
+    html += ` &mdash; ${data.size_human}</div>`;
+
+    html += '<table><thead><tr>';
+    data.headers.forEach((h, idx) => {
+      const arrow = sortState.col === idx ? (sortState.asc ? ' ▲' : ' ▼') : '';
+      html += `<th data-col="${idx}">${escapeHtml(h)}${arrow}</th>`;
+    });
+    html += '</tr></thead><tbody>';
+
+    for (const row of rows) {
+      html += '<tr>';
+      for (let i = 0; i < data.headers.length; i++) {
+        html += `<td>${escapeHtml(row[i] || '')}</td>`;
+      }
+      html += '</tr>';
+    }
+    html += '</tbody></table>';
+
+    content.innerHTML = html;
+
+    // Hook up column sort
+    content.querySelectorAll('th').forEach(th => {
+      th.addEventListener('click', () => {
+        const col = parseInt(th.dataset.col);
+        if (sortState.col === col) {
+          sortState.asc = !sortState.asc;
+        } else {
+          sortState.col = col;
+          sortState.asc = true;
+        }
+        drawTable();
+      });
+    });
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function loadCsv(csvName) {
+    content.innerHTML = '<div class="csv-loading">Loading ' + csvName + '...</div>';
+    fetch(`/menu/results/${encodeURIComponent(dirname)}/csv/${encodeURIComponent(csvName)}`)
+      .then(r => r.json())
+      .then(data => renderTable(data))
+      .catch(err => {
+        content.innerHTML = '<div class="csv-loading" style="color: var(--cp-bright-red);">Failed to load: ' + err + '</div>';
+      });
+  }
+
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      loadCsv(tab.dataset.csv);
+    });
+  });
+
+  // Auto-load first CSV
+  if (tabs.length > 0) {
+    loadCsv(tabs[0].dataset.csv);
+  }
+</script>
+{% endblock %}

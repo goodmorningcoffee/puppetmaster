@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+
+{% block title %}PUPPETMASTER — Scan Queue Status{% endblock %}
+
+{% block head %}
+<style>
+  .status-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin: 16px 0; }
+  .status-card { background: var(--cp-bg-panel); border: 1px solid var(--cp-dark-gray); padding: 12px; text-align: center; }
+  .status-card .num { font-size: 28px; font-weight: bold; }
+  .status-card .label { font-size: 11px; color: var(--cp-dim); text-transform: uppercase; }
+  .status-card.total { border-color: var(--cp-bright-white); }
+  .status-card.pending { border-color: var(--cp-neon-cyan); }
+  .status-card.running { border-color: var(--cp-bright-yellow); }
+  .status-card.completed { border-color: var(--cp-bright-green); }
+  .status-card.failed { border-color: var(--cp-bright-red); }
+  .status-card.cancelled { border-color: var(--cp-dim); }
+
+  .job-table { width: 100%; }
+  .job-table th { color: var(--cp-neon-cyan); padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--cp-neon-cyan); }
+  .job-table td { padding: 6px 8px; border-bottom: 1px dotted var(--cp-dark-gray); font-family: var(--cp-font); font-size: 13px; }
+  .job-table tr:hover td { background: var(--cp-bg-hover); }
+
+  .live-badge { display: inline-block; padding: 2px 8px; background: var(--cp-bg-black); border: 1px solid var(--cp-neon-green); color: var(--cp-neon-green); font-size: 11px; }
+  .live-badge.disconnected { border-color: var(--cp-bright-red); color: var(--cp-bright-red); }
+
+  .progress-bar { display: inline-block; width: 200px; height: 8px; background: var(--cp-bg-black); border: 1px solid var(--cp-dark-gray); position: relative; vertical-align: middle; }
+  .progress-bar .fill { display: block; height: 100%; background: var(--cp-neon-cyan); width: 0%; transition: width 0.3s ease; }
+</style>
+{% endblock %}
+
+{% block body %}
+
+  <div class="cp-section"><span class="title cp-cyan">Scan Queue Status</span></div>
+
+  {% if not available %}
+    <div class="cp-msg cp-msg-warning">
+      JobTracker not available. Queue state file may be missing.
+    </div>
+  {% endif %}
+
+  <div class="cp-panel">
+    <div class="cp-panel-title">
+      ⟨ QUEUE OVERVIEW ⟩
+      <span class="live-badge" id="live-indicator">● LIVE</span>
+    </div>
+
+    <div class="status-grid">
+      <div class="status-card total">
+        <div class="num cp-bright" id="stat-total">{{ stats.total }}</div>
+        <div class="label">Total</div>
+      </div>
+      <div class="status-card pending">
+        <div class="num cp-cyan" id="stat-pending">{{ stats.pending }}</div>
+        <div class="label">Pending</div>
+      </div>
+      <div class="status-card running">
+        <div class="num cp-yellow" id="stat-running">{{ stats.running }}</div>
+        <div class="label">Running</div>
+      </div>
+      <div class="status-card completed">
+        <div class="num cp-green" id="stat-completed">{{ stats.completed }}</div>
+        <div class="label">Completed</div>
+      </div>
+      <div class="status-card failed">
+        <div class="num cp-red" id="stat-failed">{{ stats.failed }}</div>
+        <div class="label">Failed</div>
+      </div>
+      <div class="status-card cancelled">
+        <div class="num cp-dim" id="stat-cancelled">{{ stats.cancelled }}</div>
+        <div class="label">Cancelled</div>
+      </div>
+    </div>
+
+    <div id="bg-progress" style="display: none; margin-top: 12px;">
+      <div class="cp-bright cp-bold">Background scan in progress:</div>
+      <div style="margin-top: 4px;">
+        <span class="cp-mono" id="bg-current-domain"></span>
+        <span class="cp-dim" id="bg-progress-text"></span>
+      </div>
+      <div class="progress-bar" style="margin-top: 6px;">
+        <span class="fill" id="bg-progress-fill"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="cp-panel cp-panel-yellow">
+    <div class="cp-panel-title">⟨ RUNNING JOBS ⟩</div>
+    <table class="job-table" id="running-table">
+      <thead>
+        <tr><th>Domain</th><th>Started At</th></tr>
+      </thead>
+      <tbody>
+        {% for j in running %}
+          <tr><td class="cp-mono">{{ j.domain }}</td><td class="cp-dim">{{ j.started_at or '—' }}</td></tr>
+        {% else %}
+          <tr><td colspan="2" class="cp-dim">No jobs running.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="cp-panel cp-panel-pink">
+    <div class="cp-panel-title">⟨ PENDING JOBS ⟩ <span class="cp-dim" id="pending-count-label">(showing first 20)</span></div>
+    <table class="job-table" id="pending-table">
+      <thead>
+        <tr><th>Domain</th><th>Created At</th></tr>
+      </thead>
+      <tbody>
+        {% for j in pending %}
+          <tr><td class="cp-mono">{{ j.domain }}</td><td class="cp-dim">{{ j.created_at or '—' }}</td></tr>
+        {% else %}
+          <tr><td colspan="2" class="cp-dim">No pending jobs.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if completed %}
+  <div class="cp-panel cp-panel-green">
+    <div class="cp-panel-title">⟨ RECENT COMPLETIONS ⟩</div>
+    <table class="job-table" id="completed-table">
+      <thead>
+        <tr><th>Domain</th><th>Completed At</th></tr>
+      </thead>
+      <tbody>
+        {% for j in completed[:10] %}
+          <tr><td class="cp-mono">{{ j.domain }}</td><td class="cp-dim">{{ j.completed_at or '—' }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if failed %}
+  <div class="cp-panel cp-panel-red">
+    <div class="cp-panel-title">⟨ RECENT FAILURES ⟩</div>
+    <table class="job-table" id="failed-table">
+      <thead>
+        <tr><th>Domain</th><th>Failed At</th><th>Error</th></tr>
+      </thead>
+      <tbody>
+        {% for j in failed[:10] %}
+          <tr>
+            <td class="cp-mono">{{ j.domain }}</td>
+            <td class="cp-dim">{{ j.completed_at or '—' }}</td>
+            <td class="cp-dim">{{ j.error or '' }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <nav class="cp-menu" style="margin-top: 24px;">
+    <button class="cp-menu-item" data-route="/" data-key="b">
+      <span class="key">[B]</span><span class="icon">←</span><span class="label">Back to main menu</span>
+    </button>
+  </nav>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Menu nav
+  document.querySelectorAll('.cp-menu-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const route = btn.dataset.route;
+      if (route) window.location.href = route;
+    });
+  });
+
+  // === Live updates via SSE ===
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function setText(id, text) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  }
+
+  function rebuildJobTable(tbodyId, jobs, columns, emptyMsg) {
+    const table = document.getElementById(tbodyId);
+    if (!table) return;
+    const tbody = table.querySelector('tbody');
+    if (!tbody) return;
+    if (!jobs || jobs.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="${columns.length}" class="cp-dim">${emptyMsg}</td></tr>`;
+      return;
+    }
+    let html = '';
+    for (const job of jobs) {
+      html += '<tr>';
+      for (const col of columns) {
+        const val = escapeHtml(job[col.key]);
+        html += `<td class="${col.cls || ''}">${val}</td>`;
+      }
+      html += '</tr>';
+    }
+    tbody.innerHTML = html;
+  }
+
+  function updateBgProgress(payload) {
+    const wrapper = document.getElementById('bg-progress');
+    if (!wrapper) return;
+    if (!payload.scan_running || !payload.bg_progress) {
+      wrapper.style.display = 'none';
+      return;
+    }
+    wrapper.style.display = 'block';
+    const bg = payload.bg_progress;
+    setText('bg-current-domain', bg.current_domain || '(starting...)');
+    const completed = (bg.completed || 0) + (bg.failed || 0);
+    const total = bg.total || 0;
+    const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+    setText('bg-progress-text', ` ${completed}/${total} (${pct}%)`);
+    const fill = document.getElementById('bg-progress-fill');
+    if (fill) fill.style.width = pct + '%';
+  }
+
+  let scanJobsSource = null;
+  function connectScanJobs() {
+    try {
+      scanJobsSource = new EventSource('/events/scan-jobs');
+    } catch (e) {
+      console.error('Failed to open scan-jobs SSE:', e);
+      return;
+    }
+
+    scanJobsSource.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload.error) {
+          console.warn('SSE error event:', payload.error);
+          return;
+        }
+
+        // Update stats cards
+        if (payload.stats) {
+          setText('stat-total', payload.stats.total);
+          setText('stat-pending', payload.stats.pending);
+          setText('stat-running', payload.stats.running);
+          setText('stat-completed', payload.stats.completed);
+          setText('stat-failed', payload.stats.failed);
+          setText('stat-cancelled', payload.stats.cancelled);
+        }
+
+        // Update tables
+        rebuildJobTable('running-table', payload.running, [
+          { key: 'domain', cls: 'cp-mono' },
+          { key: 'started_at', cls: 'cp-dim' }
+        ], 'No jobs running.');
+
+        rebuildJobTable('pending-table', payload.pending, [
+          { key: 'domain', cls: 'cp-mono' },
+          { key: 'created_at', cls: 'cp-dim' }
+        ], 'No pending jobs.');
+
+        // Update background scan progress overlay
+        updateBgProgress(payload);
+
+        // Mark live indicator green
+        const indicator = document.getElementById('live-indicator');
+        if (indicator) {
+          indicator.classList.remove('disconnected');
+          indicator.textContent = '● LIVE';
+        }
+      } catch (e) {
+        console.error('Failed to parse SSE event:', e, event.data);
+      }
+    };
+
+    scanJobsSource.onerror = (err) => {
+      console.warn('scan-jobs SSE error (auto-reconnect):', err);
+      const indicator = document.getElementById('live-indicator');
+      if (indicator) {
+        indicator.classList.add('disconnected');
+        indicator.textContent = '● RECONNECTING';
+      }
+    };
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', connectScanJobs);
+  } else {
+    connectScanJobs();
+  }
+</script>
+{% endblock %}

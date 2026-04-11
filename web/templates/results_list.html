@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}PUPPETMASTER — Previous Results{% endblock %}
+
+{% block body %}
+
+  <div class="cp-section"><span class="title cp-cyan">Previous Results</span></div>
+
+  {% if empty %}
+    <div class="cp-msg cp-msg-info">
+      No previous results found. Run a Puppet Analysis (option [5]) to generate your first results directory.
+    </div>
+  {% else %}
+    <div class="cp-panel">
+      <div class="cp-panel-title">⟨ {{ dirs|length }} result directories ⟩</div>
+      <div class="cp-dim">sorted by modification time, newest first</div>
+    </div>
+
+    <nav class="cp-menu" aria-label="Result directories">
+      {% for d in dirs %}
+        <button class="cp-menu-item"
+                data-route="/menu/results/{{ d.name }}"
+                data-key="{{ loop.index0 }}">
+          <span class="key">[{{ loop.index }}]</span>
+          <span class="icon">{% if d.has_summary %}📊{% else %}📁{% endif %}</span>
+          <span class="label" style="display: flex; flex-direction: column;">
+            <span class="cp-bright">{{ d.name }}</span>
+            <span class="cp-dim" style="font-size: 12px;">
+              {{ d.path }} <br>
+              {{ d.mtime }} &mdash;
+              {{ d.csv_count }} CSV{% if d.csv_count != 1 %}s{% endif %}
+              {% if not d.has_summary %} <span class="cp-yellow">(no executive_summary.md)</span>{% endif %}
+            </span>
+          </span>
+        </button>
+      {% endfor %}
+    </nav>
+  {% endif %}
+
+  <nav class="cp-menu" style="margin-top: 24px;">
+    <button class="cp-menu-item" data-route="/" data-key="b">
+      <span class="key">[B]</span><span class="icon">←</span><span class="label">Back to main menu</span>
+    </button>
+  </nav>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const first = document.querySelector('.cp-menu-item');
+    if (first) first.focus();
+  });
+  document.querySelectorAll('.cp-menu-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const route = btn.dataset.route;
+      if (route) window.location.href = route;
+    });
+  });
+</script>
+{% endblock %}

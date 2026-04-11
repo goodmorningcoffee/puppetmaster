@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+
+{% block title %}PUPPETMASTER — Domain Queue Manager{% endblock %}
+
+{% block body %}
+
+  <div class="cp-section"><span class="title cp-cyan">Domain Queue Manager</span></div>
+
+  {% if not available %}
+    <div class="cp-msg cp-msg-warning">
+      JobTracker not available — showing loaded domains only. Queue state file
+      may be missing (<span class="cp-mono">discovery/.working_set.json</span>).
+    </div>
+  {% endif %}
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+
+    {# ===== Loaded Domains panel ===== #}
+    <div class="cp-panel">
+      <div class="cp-panel-title">⟨ LOADED DOMAINS ⟩</div>
+      <div class="cp-dim">scraped or imported, not yet in scan queue</div>
+      <div style="margin-top: 12px;">
+        <span class="cp-bright cp-bold" style="font-size: 24px;">{{ loaded_count }}</span>
+        <span class="cp-dim">domains loaded</span>
+      </div>
+
+      {% if loaded_domains %}
+        <div style="margin-top: 16px;">
+          <div class="cp-bright cp-bold">First {{ loaded_domains|length }}:</div>
+          <ul style="font-family: var(--cp-font); font-size: 13px; max-height: 320px; overflow-y: auto; padding-left: 16px;">
+            {% for d in loaded_domains %}
+              <li class="cp-mono">{{ d }}</li>
+            {% endfor %}
+          </ul>
+          {% if loaded_truncated %}
+            <div class="cp-dim">... and {{ loaded_count - loaded_domains|length }} more</div>
+          {% endif %}
+        </div>
+      {% else %}
+        <div class="cp-dim" style="margin-top: 16px;">
+          No domains loaded. Use [1] Scrape or [2] Load from file to populate.
+        </div>
+      {% endif %}
+    </div>
+
+    {# ===== Scan Queue panel ===== #}
+    <div class="cp-panel cp-panel-pink">
+      <div class="cp-panel-title">⟨ SCAN QUEUE ⟩</div>
+      <div class="cp-dim">jobs tracked by JobTracker (discovery/.working_set.json)</div>
+
+      <table class="cp-table" style="margin-top: 12px;">
+        <tr><th>Status</th><th style="text-align: right;">Count</th></tr>
+        <tr>
+          <td><span class="cp-bright">Total</span></td>
+          <td style="text-align: right;"><span class="cp-bright cp-bold">{{ stats.total }}</span></td>
+        </tr>
+        <tr>
+          <td><span class="cp-cyan">Pending</span></td>
+          <td style="text-align: right;">{{ stats.pending }}</td>
+        </tr>
+        <tr>
+          <td><span class="cp-yellow">Running</span></td>
+          <td style="text-align: right;">{{ stats.running }}</td>
+        </tr>
+        <tr>
+          <td><span class="cp-green">Completed</span></td>
+          <td style="text-align: right;">{{ stats.completed }}</td>
+        </tr>
+        <tr>
+          <td><span class="cp-red">Failed</span></td>
+          <td style="text-align: right;">{{ stats.failed }}</td>
+        </tr>
+        <tr>
+          <td><span class="cp-dim">Cancelled</span></td>
+          <td style="text-align: right;">{{ stats.cancelled }}</td>
+        </tr>
+      </table>
+
+      {% if running %}
+        <div style="margin-top: 16px;">
+          <div class="cp-bright cp-bold">Currently running:</div>
+          <ul class="cp-mono" style="font-size: 13px;">
+            {% for j in running %}
+              <li>{{ j.domain }} <span class="cp-dim">— started {{ j.started_at or 'unknown' }}</span></li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endif %}
+    </div>
+
+  </div>
+
+  {# ===== Recent failures (if any) ===== #}
+  {% if failed %}
+  <div class="cp-panel cp-panel-red">
+    <div class="cp-panel-title">⟨ RECENT FAILURES ⟩</div>
+    <table class="cp-table">
+      <tr><th>Domain</th><th>Failed at</th><th>Retries</th><th>Error</th></tr>
+      {% for j in failed[:10] %}
+        <tr>
+          <td class="cp-mono">{{ j.domain }}</td>
+          <td class="cp-dim">{{ j.completed_at or '—' }}</td>
+          <td>{{ j.retry_count }}</td>
+          <td class="cp-dim">{{ j.error or '' }}</td>
+        </tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
+
+  {# ===== Recent successes (if any) ===== #}
+  {% if completed %}
+  <div class="cp-panel cp-panel-green">
+    <div class="cp-panel-title">⟨ RECENT COMPLETIONS ⟩</div>
+    <table class="cp-table">
+      <tr><th>Domain</th><th>Completed at</th><th>CSV path</th></tr>
+      {% for j in completed[:10] %}
+        <tr>
+          <td class="cp-mono">{{ j.domain }}</td>
+          <td class="cp-dim">{{ j.completed_at or '—' }}</td>
+          <td class="cp-mono cp-dim">{{ j.csv_path or '—' }}</td>
+        </tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
+
+  {# ===== Back nav ===== #}
+  <nav class="cp-menu" style="margin-top: 24px;">
+    <button class="cp-menu-item" data-route="/" data-key="b">
+      <span class="key">[B]</span><span class="icon">←</span><span class="label">Back to main menu</span>
+    </button>
+  </nav>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const first = document.querySelector('.cp-menu-item');
+    if (first) first.focus();
+  });
+  document.querySelectorAll('.cp-menu-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const route = btn.dataset.route;
+      if (route) window.location.href = route;
+    });
+  });
+</script>
+{% endblock %}

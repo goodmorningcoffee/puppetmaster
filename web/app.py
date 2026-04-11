@@ -36,9 +36,17 @@ def create_app(config_class=WebConfig):
     from .routes.home import bp as home_bp
     from .routes.help import bp as help_bp
     from .routes.events import bp as events_bp
+    from .routes.queue import bp as queue_bp
+    from .routes.config import bp as config_bp
+    from .routes.results import bp as results_bp
+    from .routes.scan_status import bp as scan_status_bp
 
     app.register_blueprint(home_bp)
     app.register_blueprint(help_bp)
     app.register_blueprint(events_bp)
+    app.register_blueprint(queue_bp)
+    app.register_blueprint(config_bp)
+    app.register_blueprint(results_bp)
+    app.register_blueprint(scan_status_bp)
 
     return app

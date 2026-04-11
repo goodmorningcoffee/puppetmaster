@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+
+{% block title %}PUPPETMASTER — Configuration{% endblock %}
+
+{% block head %}
+<style>
+  .config-table { width: 100%; }
+  .config-table .key { color: var(--cp-bright-yellow); white-space: nowrap; vertical-align: top; padding-right: 16px; }
+  .config-table .type { color: var(--cp-med-gray); font-size: 11px; vertical-align: top; padding-right: 8px; }
+  .config-table .value { vertical-align: top; word-break: break-all; }
+  .config-table .value.path { color: var(--cp-neon-cyan); }
+  .config-table .value.string { color: var(--cp-bright-white); }
+  .config-table .value.bool-true { color: var(--cp-bright-green); }
+  .config-table .value.bool-false { color: var(--cp-dim); }
+  .config-table .value.numeric { color: var(--cp-bright-magenta); }
+  .config-table .value.list ul { margin: 0; padding-left: 16px; max-height: 200px; overflow-y: auto; }
+  .config-table .value.list li { font-family: var(--cp-font); font-size: 13px; }
+  .config-table .empty { color: var(--cp-dim); font-style: italic; }
+  .config-table tr td { padding: 6px 8px; border-bottom: 1px dotted var(--cp-dark-gray); }
+  .config-table tr:hover td { background: var(--cp-bg-hover); }
+</style>
+{% endblock %}
+
+{% block body %}
+
+  <div class="cp-section"><span class="title cp-cyan">Configuration</span></div>
+
+  <div class="cp-panel">
+    <div class="cp-panel-title">⟨ CONFIG FILE ⟩</div>
+    <div class="cp-mono cp-dim">{{ config_file_path }}</div>
+    <div class="cp-dim" style="margin-top: 4px;">
+      Read-only display. To edit, modify the JSON file directly with any text editor.
+    </div>
+  </div>
+
+  {% if not pm_config_available %}
+    <div class="cp-msg cp-msg-warning">
+      pm_config module not importable — showing empty config.
+    </div>
+  {% elif empty %}
+    <div class="cp-msg cp-msg-info">
+      Config file is empty or doesn't exist yet. It will be created automatically
+      the first time PUPPETMASTER saves settings.
+    </div>
+  {% endif %}
+
+  {% if entries %}
+  <div class="cp-panel cp-panel-pink">
+    <div class="cp-panel-title">⟨ SETTINGS ⟩</div>
+    <table class="config-table">
+      {% for entry in entries %}
+        <tr>
+          <td class="key cp-mono">{{ entry.key }}</td>
+          <td class="type">[{{ entry.type }}{% if entry.count is not none %}/{{ entry.count }}{% endif %}]</td>
+          <td class="value {{ entry.type }}">
+            {% if entry.is_list %}
+              {% if entry.value %}
+                <ul>
+                  {% for item in entry.value %}
+                    <li>{{ item }}</li>
+                  {% endfor %}
+                </ul>
+              {% else %}
+                <span class="empty">(empty list)</span>
+              {% endif %}
+            {% elif entry.is_dict %}
+              {% if entry.value %}
+                <pre>{{ entry.value | tojson(indent=2) }}</pre>
+              {% else %}
+                <span class="empty">(empty dict)</span>
+              {% endif %}
+            {% else %}
+              {{ entry.value }}
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
+
+  <nav class="cp-menu" style="margin-top: 24px;">
+    <button class="cp-menu-item" data-route="/" data-key="b">
+      <span class="key">[B]</span><span class="icon">←</span><span class="label">Back to main menu</span>
+    </button>
+  </nav>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const first = document.querySelector('.cp-menu-item');
+    if (first) first.focus();
+  });
+  document.querySelectorAll('.cp-menu-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const route = btn.dataset.route;
+      if (route) window.location.href = route;
+    });
+  });
+</script>
+{% endblock %}
