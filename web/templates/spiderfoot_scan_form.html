@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+
+{% block title %}PUPPETMASTER — Start Batch Scan{% endblock %}
+
+{% block head %}
+<style>
+  .usecase-row { padding: 8px 0; border-bottom: 1px dotted var(--cp-dark-gray); }
+  .usecase-row:last-child { border-bottom: none; }
+  .usecase-row label { cursor: pointer; }
+  .usecase-row input[type="radio"] { margin-right: 8px; vertical-align: middle; }
+  .pending-preview { max-height: 180px; overflow-y: auto; padding: 8px; background: var(--cp-bg-black); border: 1px solid var(--cp-dark-gray); margin-top: 8px; }
+  .pending-preview .item { font-family: var(--cp-font); font-size: 12px; padding: 1px 0; }
+</style>
+{% endblock %}
+
+{% block body %}
+
+  <div class="cp-section"><span class="title cp-cyan">Start Batch Scan</span></div>
+
+  {% if not status.sf_installed %}
+    <div class="cp-msg cp-msg-error">
+      SpiderFoot is not installed. Cannot start batch scan.
+      Use the TUI's [I] Install SpiderFoot option first.
+    </div>
+  {% elif pending_count == 0 %}
+    <div class="cp-msg cp-msg-warning">
+      No domains in the scan queue.
+      <a href="/menu/queue" class="cp-cyan">Open the Domain Queue Manager</a>
+      to commit domains first.
+    </div>
+  {% endif %}
+
+  {# ===== Queue preview ===== #}
+  <div class="cp-panel">
+    <div class="cp-panel-title">⟨ SCAN QUEUE ⟩</div>
+    <div class="cp-bright">
+      <span class="cp-bold" style="font-size: 24px;">{{ pending_count }}</span>
+      domain(s) queued for scanning
+    </div>
+    {% if pending_domains %}
+      <div class="cp-dim" style="margin-top: 8px;">Preview (first 20):</div>
+      <div class="pending-preview">
+        {% for j in pending_domains %}
+          <div class="item">{{ j.domain }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+
+  {# ===== Usecase form ===== #}
+  <form method="POST" action="/menu/spiderfoot/scan/run">
+    <div class="cp-panel cp-panel-pink">
+      <div class="cp-panel-title">⟨ SPIDERFOOT USECASE ⟩</div>
+      <div class="cp-dim" style="margin-bottom: 12px;">
+        These map to SpiderFoot's <span class="cp-mono">-u</span> flag and control which
+        modules run. Start with <span class="cp-bright">All</span> for complete coverage,
+        or <span class="cp-bright">Passive</span> for stealth.
+      </div>
+
+      {% for key, desc in usecases.items() %}
+        <div class="usecase-row">
+          <label>
+            <input type="radio" name="usecase" value="{{ key }}"
+                   {% if key == 'all' %}checked{% endif %}>
+            <span class="cp-bright cp-bold">[{{ key[0]|upper }}] {{ key|capitalize }}</span>
+            <div class="cp-dim" style="font-size: 12px; margin-left: 24px;">{{ desc }}</div>
+          </label>
+        </div>
+      {% endfor %}
+    </div>
+
+    <div style="margin: 16px 0;">
+      <button type="submit" class="cp-menu-item"
+              {% if not status.sf_installed or pending_count == 0 %}disabled{% endif %}
+              style="width: 100%; justify-content: center;
+                     background: var(--cp-bg-panel);
+                     border-color: var(--cp-bright-green);
+                     color: var(--cp-bright-green);">
+        <span class="key">[Enter]</span><span class="icon">▶</span>
+        <span class="label">Start Scan ({{ pending_count }} domain(s))</span>
+      </button>
+    </div>
+  </form>
+
+  <nav class="cp-menu" style="margin-top: 24px;">
+    <button class="cp-menu-item" data-route="/menu/spiderfoot" data-key="s">
+      <span class="key">[S]</span><span class="icon">🕷️</span>
+      <span class="label">SpiderFoot Control Center</span>
+    </button>
+    <button class="cp-menu-item" data-route="/menu/queue" data-key="q">
+      <span class="key">[Q]</span><span class="icon">📋</span>
+      <span class="label">Queue manager</span>
+    </button>
+    <button class="cp-menu-item" data-route="/" data-key="b">
+      <span class="key">[B]</span><span class="icon">←</span>
+      <span class="label">Back to main menu</span>
+    </button>
+  </nav>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const first = document.querySelector('input[type="radio"]:checked')
+               || document.querySelector('.cp-menu-item');
+    if (first) first.focus();
+  });
+  document.querySelectorAll('.cp-menu-item[data-route]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const route = btn.dataset.route;
+      if (route) window.location.href = route;
+    });
+  });
+</script>
+{% endblock %}

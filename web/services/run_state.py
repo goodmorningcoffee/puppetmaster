@@ -240,3 +240,17 @@ def is_terminal(run_id: str) -> bool:
         if run is None:
             return True  # unknown run = nothing to wait for
         return run['status'] in ('completed', 'failed')
+
+
+def has_running_run_of_kind(kind: str) -> Optional[str]:
+    """
+    Return the run_id of any currently-running run of the given kind, or None.
+
+    Used to fast-fail duplicate submissions of long-running operations
+    (e.g., two browser tabs both clicking "Start scan").
+    """
+    with _runs_lock:
+        for rid, r in _runs.items():
+            if r['kind'] == kind and r['status'] == 'running':
+                return rid
+    return None

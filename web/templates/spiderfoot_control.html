@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+
+{% block title %}PUPPETMASTER — SpiderFoot Control Center{% endblock %}
+
+{% block head %}
+<style>
+  .sf-status-row { margin-top: 6px; }
+  .sf-action-grid { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .sf-action-btn { background: var(--cp-bg-panel); border: 1px solid var(--cp-dark-gray); color: var(--cp-bright-white); font-family: var(--cp-font); font-size: 13px; padding: 8px 14px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; }
+  .sf-action-btn:hover { border-color: var(--cp-neon-cyan); color: var(--cp-neon-cyan); box-shadow: var(--cp-glow-cyan); }
+  .sf-action-btn.danger { color: var(--cp-bright-red); border-color: var(--cp-bright-red); }
+  .sf-action-btn.danger:hover { box-shadow: 0 0 6px var(--cp-bright-red); }
+  .sf-action-btn.success { color: var(--cp-bright-green); border-color: var(--cp-bright-green); }
+  .sf-action-btn.success:hover { box-shadow: 0 0 6px var(--cp-bright-green); }
+</style>
+{% endblock %}
+
+{% block body %}
+
+  <div class="cp-section"><span class="title cp-cyan">SpiderFoot Control Center</span></div>
+
+  {% if message %}
+    <div class="cp-msg cp-msg-{{ message[0] }}">{{ message[1] }}</div>
+  {% endif %}
+
+  {# ===== Status panel ===== #}
+  <div class="cp-panel">
+    <div class="cp-panel-title">⟨ STATUS ⟩</div>
+    {% if status.sf_installed %}
+      <div class="cp-bright">
+        SpiderFoot: <span class="cp-green cp-bold">INSTALLED</span>
+      </div>
+      <div class="cp-dim cp-mono">{{ status.sf_path }}</div>
+
+      {% if status.db_path %}
+        <div class="sf-status-row">
+          <span class="cp-bright">Database:</span>
+          <span class="cp-cyan">{{ status.db_size }}</span>
+          <span class="cp-dim">— {{ status.db_scans.get('total', 0) }} scans
+            ({{ status.db_scans.get('running', 0) }} running,
+             {{ status.db_scans.get('finished', 0) }} finished,
+             {{ status.db_scans.get('aborted', 0) }} aborted)</span>
+        </div>
+        <div class="cp-dim cp-mono" style="font-size: 11px;">{{ status.db_path }}</div>
+      {% else %}
+        <div class="sf-status-row cp-dim">Database: not found yet (first scan will create it)</div>
+      {% endif %}
+
+      <div class="sf-status-row">
+        <span class="cp-bright">Web GUI (port {{ status.gui_port }}):</span>
+        {% if status.gui_running %}
+          <span class="cp-green cp-bold">RUNNING</span>
+        {% else %}
+          <span class="cp-red">NOT RUNNING</span>
+        {% endif %}
+      </div>
+
+      <div class="sf-status-row">
+        <span class="cp-bright">tmux:</span>
+        {% if status.in_tmux %}
+          <span class="cp-green">Active</span>
+        {% else %}
+          <span class="cp-dim">Not running inside tmux</span>
+        {% endif %}
+      </div>
+
+      <div class="sf-status-row">
+        <span class="cp-bright">Pending scan queue:</span>
+        <span class="cp-cyan cp-bold">{{ pending_count }}</span>
+        <span class="cp-dim">domain(s) queued</span>
+      </div>
+    {% else %}
+      <div class="cp-msg cp-msg-warning" style="margin: 0;">
+        SpiderFoot is not installed. Run <span class="cp-mono">python3 puppetmaster.py</span>
+        and use the SpiderFoot Control Center's <span class="cp-mono">[I] Install SpiderFoot</span>
+        option from the TUI. The web GUI cannot install SpiderFoot for you.
+      </div>
+    {% endif %}
+    {% if status.error %}
+      <div class="cp-dim sf-status-row" style="font-size: 11px;">({{ status.error }})</div>
+    {% endif %}
+  </div>
+
+  {# ===== GUI panel ===== #}
+  <div class="cp-panel cp-panel-pink">
+    <div class="cp-panel-title">⟨ SPIDERFOOT WEB GUI ⟩</div>
+    <div class="cp-dim">
+      SpiderFoot has its own web UI on port {{ status.gui_port }}. PUPPETMASTER does NOT
+      proxy it — opens directly in a new tab. If you're tunneling from a remote server,
+      forward port {{ status.gui_port }} too.
+    </div>
+    <div class="sf-action-grid">
+      <a href="http://localhost:{{ status.gui_port }}" target="_blank" rel="noopener noreferrer"
+         class="sf-action-btn">
+        <span class="key">[G]</span><span class="icon">🌐</span>
+        <span class="label">Open in new tab</span>
+      </a>
+      {% if status.sf_installed and not status.gui_running %}
+        <form method="POST" action="/menu/spiderfoot/start-gui" style="margin: 0;">
+          <button type="submit" class="sf-action-btn success">
+            <span class="key">[S]</span><span class="icon">▶</span>
+            <span class="label">Start SpiderFoot server</span>
+          </button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ===== Destructive actions (red panels) ===== #}
+  {% if status.sf_installed %}
+    <div class="cp-panel cp-panel-red">
+      <div class="cp-panel-title">⟨ RESET DATABASE ⟩</div>
+      <div class="cp-dim">
+        Permanently deletes the SpiderFoot database. A timestamped backup is
+        created automatically. Use this to clear stuck scans or reclaim disk space.
+      </div>
+      <div class="sf-action-grid">
+        <form method="POST" action="/menu/spiderfoot/reset-db" style="margin: 0;"
+              onsubmit="return confirm('Permanently delete the SpiderFoot database? A timestamped backup will be created first. This cannot be undone.');">
+          <button type="submit" class="sf-action-btn danger">
+            <span class="key">[R]</span><span class="icon">🗑</span>
+            <span class="label">Reset SpiderFoot database (with backup)</span>
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <div class="cp-panel cp-panel-red">
+      <div class="cp-panel-title">⟨ KILL PROCESSES ⟩</div>
+      <div class="cp-dim">
+        Sends SIGKILL to all <span class="cp-mono">sf.py</span> processes. Any
+        in-flight scans will be aborted. Use when the control center is stuck
+        or a scan is hung.
+      </div>
+      <div class="sf-action-grid">
+        <form method="POST" action="/menu/spiderfoot/kill" style="margin: 0;"
+              onsubmit="return confirm('Kill all running SpiderFoot processes? Any in-flight scans will be aborted.');">
+          <button type="submit" class="sf-action-btn danger">
+            <span class="key">[K]</span><span class="icon">⚠</span>
+            <span class="label">Kill SpiderFoot processes</span>
+          </button>
+        </form>
+      </div>
+    </div>
+  {% endif %}
+
+  {# ===== Outbound nav ===== #}
+  <nav class="cp-menu" style="margin-top: 24px;">
+    {% if status.sf_installed %}
+      <button class="cp-menu-item" data-route="/menu/spiderfoot/scan" data-key="1">
+        <span class="key">[1]</span><span class="icon">▶</span>
+        <span class="label">Start batch scans</span>
+      </button>
+    {% endif %}
+    <button class="cp-menu-item" data-route="/menu/scan-status" data-key="4">
+      <span class="key">[4]</span><span class="icon">📋</span>
+      <span class="label">View scan status (live)</span>
+    </button>
+    <button class="cp-menu-item" data-route="/menu/queue" data-key="q">
+      <span class="key">[Q]</span><span class="icon">📋</span>
+      <span class="label">Domain queue manager</span>
+    </button>
+    <button class="cp-menu-item" data-route="/" data-key="b">
+      <span class="key">[B]</span><span class="icon">←</span>
+      <span class="label">Back to main menu</span>
+    </button>
+  </nav>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const first = document.querySelector('.cp-menu-item');
+    if (first) first.focus();
+  });
+  document.querySelectorAll('.cp-menu-item[data-route]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const route = btn.dataset.route;
+      if (route) window.location.href = route;
+    });
+  });
+</script>
+{% endblock %}

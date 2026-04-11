@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block title %}PUPPETMASTER — Batch Scan Complete{% endblock %}
+
+{% block body %}
+
+  <div class="cp-section"><span class="title cp-cyan">Batch Scan Complete</span></div>
+
+  <div class="cp-panel">
+    <div class="cp-panel-title">⟨ RUN {{ run_id }} ⟩</div>
+    {% if run.status == 'failed' %}
+      <div class="cp-msg cp-msg-error" style="margin: 0;">
+        Scan batch failed: {{ run.error }}
+      </div>
+    {% else %}
+      <div class="cp-bright">
+        <span class="cp-bold" style="font-size: 24px;">{{ total }}</span> total scanned —
+        <span class="cp-green cp-bold">{{ completed }}</span> succeeded,
+        <span class="cp-red cp-bold">{{ failed }}</span> failed
+      </div>
+      <div class="cp-dim" style="margin-top: 4px;">Usecase: <span class="cp-mono">{{ usecase }}</span></div>
+    {% endif %}
+  </div>
+
+  {% set completed_jobs = jobs|selectattr('status', 'equalto', 'completed')|list %}
+  {% set failed_jobs = jobs|selectattr('status', 'equalto', 'failed')|list %}
+
+  {% if completed_jobs %}
+    <div class="cp-panel cp-panel-green">
+      <div class="cp-panel-title">⟨ COMPLETED SCANS ⟩</div>
+      <table class="cp-table">
+        <tr><th>Domain</th><th>CSV Export</th></tr>
+        {% for j in completed_jobs %}
+          <tr>
+            <td class="cp-mono">{{ j.domain }}</td>
+            <td class="cp-dim cp-mono" style="font-size: 11px;">
+              {{ j.csv_path or '(not captured)' }}
+            </td>
+          </tr>
+        {% endfor %}
+      </table>
+    </div>
+  {% endif %}
+
+  {% if failed_jobs %}
+    <div class="cp-panel cp-panel-red">
+      <div class="cp-panel-title">⟨ FAILED SCANS ⟩</div>
+      <table class="cp-table">
+        <tr><th>Domain</th><th>Error</th></tr>
+        {% for j in failed_jobs %}
+          <tr>
+            <td class="cp-mono">{{ j.domain }}</td>
+            <td class="cp-dim">{{ j.error or '(no detail)' }}</td>
+          </tr>
+        {% endfor %}
+      </table>
+    </div>
+  {% endif %}
+
+  <nav class="cp-menu" style="margin-top: 24px;">
+    <button class="cp-menu-item" data-route="/menu/analysis" data-key="5">
+      <span class="key">[5]</span><span class="icon">🎭</span>
+      <span class="label">Run Puppet Analysis</span>
+    </button>
+    <button class="cp-menu-item" data-route="/menu/spiderfoot" data-key="s">
+      <span class="key">[S]</span><span class="icon">🕷️</span>
+      <span class="label">Control Center</span>
+    </button>
+    <button class="cp-menu-item" data-route="/menu/scan-status" data-key="4">
+      <span class="key">[4]</span><span class="icon">📋</span>
+      <span class="label">Scan status</span>
+    </button>
+    <button class="cp-menu-item" data-route="/" data-key="b">
+      <span class="key">[B]</span><span class="icon">←</span>
+      <span class="label">Main menu</span>
+    </button>
+  </nav>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const first = document.querySelector('.cp-menu-item');
+    if (first) first.focus();
+  });
+  document.querySelectorAll('.cp-menu-item[data-route]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const route = btn.dataset.route;
+      if (route) window.location.href = route;
+    });
+  });
+</script>
+{% endblock %}

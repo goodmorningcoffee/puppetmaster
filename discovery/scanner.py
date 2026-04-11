@@ -41,7 +41,8 @@ class SpiderFootScanner:
         job_tracker: Optional[JobTracker] = None,
         spiderfoot_python: Optional[str] = None,
         timeout_seconds: int = 1800,
-        modules: Optional[str] = None
+        modules: Optional[str] = None,
+        usecase: str = "all"
     ):
         """
         Initialize the scanner.
@@ -53,13 +54,17 @@ class SpiderFootScanner:
             job_tracker: Optional existing JobTracker instance
             spiderfoot_python: Path to Python interpreter in SpiderFoot venv
             timeout_seconds: Timeout per scan in seconds (default: 1800 = 30 min)
-            modules: Comma-separated list of modules to use (default: None = all)
+            modules: Comma-separated list of modules to use (default: None = use usecase)
+            usecase: SpiderFoot usecase preset, one of "all", "footprint",
+                     "investigate", "passive". Used only when modules is None.
+                     Passed via SpiderFoot's -u flag. Default "all".
         """
         self.sf_path = Path(spiderfoot_path)
         self.output_dir = Path(output_dir)
         self.max_parallel = max_parallel
         self.timeout_seconds = timeout_seconds
         self.modules = modules
+        self.usecase = usecase
 
         # Use venv python if provided, otherwise try to find it
         if spiderfoot_python and os.path.exists(spiderfoot_python):
@@ -219,11 +224,11 @@ class SpiderFootScanner:
             # No -q flag - we want stderr for progress tracking
         ]
 
-        # Add module filter if specified
+        # Add module filter if specified, otherwise use the configured usecase
         if self.modules:
             cmd.extend(["-m", self.modules])
         else:
-            cmd.extend(["-u", "all"])  # Use all module types
+            cmd.extend(["-u", self.usecase])  # SpiderFoot usecase preset
 
         # Progress tracking state
         progress_state = {
