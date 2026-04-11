@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block title %}PUPPETMASTER — Delete Domain Lists{% endblock %}
+
+{% block body %}
+
+  <div class="cp-section"><span class="title cp-red">Delete Domain Lists</span></div>
+
+  {% if message %}
+    <div class="cp-msg cp-msg-{{ message[0] }}">{{ message[1] }}</div>
+  {% endif %}
+
+  <div class="cp-panel cp-panel-red">
+    <div class="cp-panel-title">⟨ DELETE FILES ⟩</div>
+    <div class="cp-dim" style="margin-bottom: 12px;">
+      Files in <span class="cp-mono">domain_lists/</span> &mdash;
+      check the boxes to select files for deletion. <span class="cp-yellow">This is permanent.</span>
+    </div>
+
+    {% if files %}
+      <form method="POST" action="/menu/delete-lists/delete" id="delete-form">
+        <table class="cp-table">
+          <tr>
+            <th><input type="checkbox" id="select-all" title="Select all"></th>
+            <th>File</th>
+            <th>Domains</th>
+            <th>Size</th>
+            <th>Modified</th>
+          </tr>
+          {% for f in files %}
+            <tr>
+              <td><input type="checkbox" name="selected" value="{{ f.name }}" class="file-cb"></td>
+              <td class="cp-mono">{{ f.name }}</td>
+              <td>{{ f.domain_count }}</td>
+              <td class="cp-dim">{{ f.size_human }}</td>
+              <td class="cp-dim" style="font-size: 12px;">{{ f.mtime }}</td>
+            </tr>
+          {% endfor %}
+        </table>
+
+        <div style="margin-top: 16px; display: flex; gap: 8px;">
+          <button type="submit" class="cp-menu-item" id="delete-btn"
+                  style="background: var(--cp-bg-panel); border-color: var(--cp-bright-red); color: var(--cp-bright-red);">
+            <span class="key">[D]</span><span class="icon">🗑️</span>
+            <span class="label">Delete selected (<span id="selected-count">0</span>)</span>
+          </button>
+        </div>
+      </form>
+    {% else %}
+      <div class="cp-dim">No domain list files found.</div>
+    {% endif %}
+  </div>
+
+  <nav class="cp-menu" style="margin-top: 24px;">
+    <button class="cp-menu-item" data-route="/menu/load-domains" data-key="l">
+      <span class="key">[L]</span><span class="icon">📂</span><span class="label">Load Domains screen</span>
+    </button>
+    <button class="cp-menu-item" data-route="/" data-key="b">
+      <span class="key">[B]</span><span class="icon">←</span><span class="label">Back to main menu</span>
+    </button>
+  </nav>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Menu nav
+  document.querySelectorAll('.cp-menu-item[data-route]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const route = btn.dataset.route;
+      if (route) window.location.href = route;
+    });
+  });
+
+  // Select-all toggle
+  const selectAll = document.getElementById('select-all');
+  const checkboxes = document.querySelectorAll('.file-cb');
+  const countLabel = document.getElementById('selected-count');
+
+  function updateCount() {
+    const checked = document.querySelectorAll('.file-cb:checked').length;
+    if (countLabel) countLabel.textContent = checked;
+  }
+
+  if (selectAll) {
+    selectAll.addEventListener('change', () => {
+      checkboxes.forEach(cb => { cb.checked = selectAll.checked; });
+      updateCount();
+    });
+  }
+  checkboxes.forEach(cb => cb.addEventListener('change', updateCount));
+
+  // Confirm before delete
+  const form = document.getElementById('delete-form');
+  if (form) {
+    form.addEventListener('submit', (e) => {
+      const checked = document.querySelectorAll('.file-cb:checked').length;
+      if (checked === 0) {
+        e.preventDefault();
+        alert('No files selected.');
+        return;
+      }
+      if (!confirm(`Permanently delete ${checked} file(s)? This cannot be undone.`)) {
+        e.preventDefault();
+      }
+    });
+  }
+</script>
+{% endblock %}

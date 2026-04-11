@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block title %}PUPPETMASTER — Load Domains{% endblock %}
+
+{% block body %}
+
+  <div class="cp-section"><span class="title cp-cyan">Load Domains</span></div>
+
+  {% if message %}
+    <div class="cp-msg cp-msg-{{ message[0] }}">{{ message[1] }}</div>
+  {% endif %}
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+
+    {# ===== Upload form ===== #}
+    <div class="cp-panel">
+      <div class="cp-panel-title">⟨ UPLOAD A FILE ⟩</div>
+      <div class="cp-dim" style="margin-bottom: 12px;">
+        Upload a text file containing one domain per line. Lines starting
+        with <span class="cp-mono">#</span> are treated as comments.
+      </div>
+      <form method="POST" action="/menu/load-domains/upload" enctype="multipart/form-data">
+        <input type="file" name="file" accept=".txt,text/plain" required
+               style="font-family: var(--cp-font); width: 100%; margin-bottom: 12px;">
+        <button type="submit" class="cp-menu-item" style="width: 100%; justify-content: center;">
+          <span class="key">[U]</span><span class="icon">📤</span><span class="label">Upload &amp; Load</span>
+        </button>
+      </form>
+    </div>
+
+    {# ===== Pick from existing files ===== #}
+    <div class="cp-panel cp-panel-pink">
+      <div class="cp-panel-title">⟨ PICK FROM SAVED LISTS ⟩</div>
+      <div class="cp-dim" style="margin-bottom: 12px;">
+        {{ files|length }} file(s) in <span class="cp-mono">domain_lists/</span>
+      </div>
+
+      {% if files %}
+        <table class="cp-table">
+          <tr><th>File</th><th>Domains</th><th>Modified</th><th>Action</th></tr>
+          {% for f in files %}
+            <tr>
+              <td class="cp-mono">{{ f.name }}</td>
+              <td>{{ f.domain_count }}</td>
+              <td class="cp-dim" style="font-size: 12px;">{{ f.mtime }}</td>
+              <td>
+                <form method="POST" action="/menu/load-domains/pick" style="display: inline;">
+                  <input type="hidden" name="filename" value="{{ f.name }}">
+                  <button type="submit" class="cp-menu-item" style="padding: 2px 8px;">
+                    <span class="cp-cyan">load</span>
+                  </button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        </table>
+      {% else %}
+        <div class="cp-dim">No saved domain lists yet. Upload a file or use the scrape screen to create one.</div>
+      {% endif %}
+    </div>
+
+  </div>
+
+  <nav class="cp-menu" style="margin-top: 24px;">
+    <button class="cp-menu-item" data-route="/menu/queue" data-key="q">
+      <span class="key">[Q]</span><span class="icon">📋</span><span class="label">View domain queue</span>
+    </button>
+    <button class="cp-menu-item" data-route="/" data-key="b">
+      <span class="key">[B]</span><span class="icon">←</span><span class="label">Back to main menu</span>
+    </button>
+  </nav>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const first = document.querySelector('input[type="file"]') || document.querySelector('.cp-menu-item');
+    if (first) first.focus();
+  });
+  document.querySelectorAll('.cp-menu-item[data-route]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const route = btn.dataset.route;
+      if (route) window.location.href = route;
+    });
+  });
+</script>
+{% endblock %}

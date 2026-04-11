@@ -2,9 +2,32 @@
 
 {% block title %}PUPPETMASTER — Domain Queue Manager{% endblock %}
 
+{% block head %}
+<style>
+  .domain-row { display: flex; align-items: center; padding: 4px 0; border-bottom: 1px dotted var(--cp-dark-gray); }
+  .domain-row:hover { background: var(--cp-bg-hover); }
+  .domain-row .name { flex: 1; font-family: var(--cp-font); font-size: 13px; }
+  .domain-row form { margin: 0; }
+  .domain-row .remove-btn { background: transparent; border: 1px solid transparent; color: var(--cp-bright-red); font-family: var(--cp-font); font-size: 12px; padding: 2px 8px; cursor: pointer; }
+  .domain-row .remove-btn:hover { border-color: var(--cp-bright-red); box-shadow: 0 0 4px var(--cp-bright-red); }
+  .queue-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .queue-actions form { margin: 0; }
+  .queue-action-btn { background: var(--cp-bg-panel); border: 1px solid var(--cp-dark-gray); color: var(--cp-bright-white); font-family: var(--cp-font); font-size: 13px; padding: 6px 12px; cursor: pointer; }
+  .queue-action-btn:hover { border-color: var(--cp-neon-cyan); color: var(--cp-neon-cyan); box-shadow: var(--cp-glow-cyan); }
+  .queue-action-btn.danger { color: var(--cp-bright-red); }
+  .queue-action-btn.danger:hover { border-color: var(--cp-bright-red); box-shadow: 0 0 6px var(--cp-bright-red); }
+  .queue-action-btn.success { color: var(--cp-bright-green); }
+  .queue-action-btn.success:hover { border-color: var(--cp-bright-green); box-shadow: 0 0 6px var(--cp-bright-green); }
+</style>
+{% endblock %}
+
 {% block body %}
 
   <div class="cp-section"><span class="title cp-cyan">Domain Queue Manager</span></div>
+
+  {% if message %}
+    <div class="cp-msg cp-msg-{{ message[0] }}">{{ message[1] }}</div>
+  {% endif %}
 
   {% if not available %}
     <div class="cp-msg cp-msg-warning">
@@ -25,15 +48,30 @@
       </div>
 
       {% if loaded_domains %}
+        <div class="queue-actions">
+          <form method="POST" action="/menu/queue/commit" onsubmit="return confirm('Move {{ loaded_count }} domains to the scan queue?');">
+            <button type="submit" class="queue-action-btn success">⮕ Commit to scan queue</button>
+          </form>
+          <form method="POST" action="/menu/queue/clear" onsubmit="return confirm('Clear all {{ loaded_count }} loaded domains? This cannot be undone.');">
+            <button type="submit" class="queue-action-btn danger">⨯ Clear all</button>
+          </form>
+        </div>
+
         <div style="margin-top: 16px;">
-          <div class="cp-bright cp-bold">First {{ loaded_domains|length }}:</div>
-          <ul style="font-family: var(--cp-font); font-size: 13px; max-height: 320px; overflow-y: auto; padding-left: 16px;">
+          <div class="cp-bright cp-bold">Domains:</div>
+          <div style="max-height: 360px; overflow-y: auto; padding-right: 8px; margin-top: 4px;">
             {% for d in loaded_domains %}
-              <li class="cp-mono">{{ d }}</li>
+              <div class="domain-row">
+                <span class="name">{{ d }}</span>
+                <form method="POST" action="/menu/queue/remove">
+                  <input type="hidden" name="domain" value="{{ d }}">
+                  <button type="submit" class="remove-btn" title="Remove">⨯ remove</button>
+                </form>
+              </div>
             {% endfor %}
-          </ul>
+          </div>
           {% if loaded_truncated %}
-            <div class="cp-dim">... and {{ loaded_count - loaded_domains|length }} more</div>
+            <div class="cp-dim">... and {{ loaded_count - loaded_domains|length }} more (showing first 50)</div>
           {% endif %}
         </div>
       {% else %}

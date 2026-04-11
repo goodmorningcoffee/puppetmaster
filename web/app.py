@@ -40,6 +40,8 @@ def create_app(config_class=WebConfig):
     from .routes.config import bp as config_bp
     from .routes.results import bp as results_bp
     from .routes.scan_status import bp as scan_status_bp
+    from .routes.load_domains import bp as load_domains_bp
+    from .routes.delete_lists import bp as delete_lists_bp
 
     app.register_blueprint(home_bp)
     app.register_blueprint(help_bp)
@@ -48,5 +50,7 @@ def create_app(config_class=WebConfig):
     app.register_blueprint(config_bp)
     app.register_blueprint(results_bp)
     app.register_blueprint(scan_status_bp)
+    app.register_blueprint(load_domains_bp)
+    app.register_blueprint(delete_lists_bp)
 
     return app
